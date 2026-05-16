@@ -45,6 +45,10 @@ function writeEvent(res, type, payload = {}) {
   res.write(`${JSON.stringify({ type, ...payload })}\n`);
 }
 
+function stripAnsi(text) {
+  return text.replace(/\u001b\[[0-9;]*m/g, "");
+}
+
 async function runStep(command, args, env, res, shouldAbort) {
   writeEvent(res, "step", { command: [command, ...args].join(" ") });
 
@@ -61,10 +65,10 @@ async function runStep(command, args, env, res, shouldAbort) {
     shouldAbort.onAbort = stop;
 
     child.stdout.on("data", (chunk) => {
-      writeEvent(res, "stdout", { data: chunk.toString("utf8") });
+      writeEvent(res, "stdout", { data: stripAnsi(chunk.toString("utf8")) });
     });
     child.stderr.on("data", (chunk) => {
-      writeEvent(res, "stderr", { data: chunk.toString("utf8") });
+      writeEvent(res, "stderr", { data: stripAnsi(chunk.toString("utf8")) });
     });
     child.on("error", (error) => {
       writeEvent(res, "error", { message: error.message });
