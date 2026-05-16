@@ -16,6 +16,8 @@ DuckDB client.
   into that player's own running DuckDB process.
 - Stub, OpenAI-compatible, and local oMLX agent modes. The default smoke test
   uses `stub` so it is deterministic and does not need network access.
+- Model output normalization before writes: phase actions are constrained, wolf
+  targets are forced to valid non-partners, and wolf actions cannot publish text.
 - Public views that expose only safe columns during play.
 - A wolf-channel view that row-filters locally based on the player's own role.
 - Server-side Quack authentication and authorization callbacks.
@@ -107,6 +109,10 @@ before running the script. The script checks `/v1/models`, chooses the first
 model unless `OMLX_MODEL` is set, generates a three-player config, asks each
 container-local agent to act through oMLX, and then runs the same Quack gateway
 assertions as the deterministic smoke.
+
+The model response is treated as a proposal, not as trusted SQL input. Before
+`agent-act.sh` writes to DuckDB, it normalizes the action for the current phase,
+retargets invalid wolf choices, and strips public text from wolf-phase actions.
 
 ## How It Maps To The Browser Demo
 

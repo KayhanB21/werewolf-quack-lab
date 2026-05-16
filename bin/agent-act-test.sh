@@ -10,7 +10,10 @@ run_action() {
   local role="$2"
   local partners="$3"
   local out_file="$4"
-  local pipe_path="${TMP_DIR}/${phase}-${role}.fifo"
+  local provider="${5:-stub}"
+  local fake_content="${6:-}"
+  local test_path="${7:-${PATH}}"
+  local pipe_path="${out_file}.fifo"
 
   mkfifo "${pipe_path}"
   cat "${pipe_path}" > "${out_file}" &
@@ -21,7 +24,10 @@ run_action() {
     ROLE="${role}" \
     PARTNERS="${partners}" \
     PLAYER_IDS="agent-a,agent-b,agent-d" \
-    LLM_PROVIDER="stub" \
+    LLM_PROVIDER="${provider}" \
+    LLM_BASE_URL="http://fake-openai.local/v1" \
+    FAKE_TURN_CONTENT="${fake_content}" \
+    PATH="${test_path}" \
     ACTION_PIPE="${pipe_path}" \
     "${ROOT_DIR}/bin/agent-act.sh" --phase "${phase}" --round 2 >/dev/null
 
@@ -56,6 +62,41 @@ fi
 
 if grep -Fq "Stub agent" "${day_sql}" && ! grep -Fq "role=seer" "${day_sql}"; then
   echo "day rationale should include the agent role" >&2
+  exit 1
+fi
+
+fake_bin="${TMP_DIR}/bin"
+mkdir -p "${fake_bin}"
+cat > "${fake_bin}/curl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+jq -n --arg content "${FAKE_TURN_CONTENT:?FAKE_TURN_CONTENT is required}" \
+  '{choices: [{message: {content: $content}}]}'
+SH
+chmod +x "${fake_bin}/curl"
+
+model_wolf_sql="${TMP_DIR}/model-wolf.sql"
+run_action \
+  "wolf" \
+  "wolf" \
+  "agent-d" \
+  "${model_wolf_sql}" \
+  "openai-compatible" \
+  '{"action":"kill","target":"agent-d","public_text":"Agent D is safe because they are with me.","rationale":"The model leaked a private wolf plan."}' \
+  "${fake_bin}:${PATH}"
+
+if ! grep -Fq "'wolf-kill'" "${model_wolf_sql}"; then
+  echo "model wolf action should normalize to wolf-kill" >&2
+  exit 1
+fi
+
+if ! grep -Fq "'agent-b'" "${model_wolf_sql}"; then
+  echo "model wolf action should retarget away from self and partners" >&2
+  exit 1
+fi
+
+if grep -Fq "Agent D is safe" "${model_wolf_sql}"; then
+  echo "model wolf action should not write public_text" >&2
   exit 1
 fi
 

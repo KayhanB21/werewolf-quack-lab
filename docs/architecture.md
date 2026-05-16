@@ -52,6 +52,10 @@ player node therefore creates a local FIFO:
 the command and inserts the row. This keeps the action write inside the player
 container and avoids giving the gateway write access.
 
+Model output is normalized before the write. Day actions are constrained to the
+public action set, wolf-phase actions become private `wolf-kill` intents, wolf
+targets must be valid non-partner players, and wolf public text is discarded.
+
 The default provider is deterministic:
 
 ```bash

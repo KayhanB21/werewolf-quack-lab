@@ -61,6 +61,45 @@ pick_target() {
   printf "%s" "${NODE_ID}"
 }
 
+target_is_valid() {
+  local candidate="$1"
+  [[ -n "${candidate}" && "${candidate}" != "${NODE_ID}" ]] || return 1
+  contains_csv "${candidate}" "${PLAYER_IDS}" || return 1
+  if [[ "${PHASE}" == "wolf" && "${ROLE}" == "wolf" ]] && contains_csv "${candidate}" "${PARTNERS}"; then
+    return 1
+  fi
+  return 0
+}
+
+normalize_target() {
+  local candidate="$1"
+  if target_is_valid "${candidate}"; then
+    printf "%s" "${candidate}"
+    return 0
+  fi
+  pick_target
+}
+
+fallback_public_text() {
+  local action="$1"
+  local target="$2"
+
+  case "${action}" in
+    accuse)
+      printf "%s: I suspect %s." "${NODE_ID}" "${target}"
+      ;;
+    investigate)
+      printf "%s: I am checking %s." "${NODE_ID}" "${target}"
+      ;;
+    vote)
+      printf "%s: I vote %s." "${NODE_ID}" "${target}"
+      ;;
+    *)
+      printf "%s: I am checking the public record in round %s." "${NODE_ID}" "${ROUND}"
+      ;;
+  esac
+}
+
 stub_turn_json() {
   local target
   target="$(pick_target)"
@@ -124,7 +163,7 @@ openai_turn_json() {
         messages: [
           {
             role: "system",
-            content: "You are one Werewolf game agent. Return one JSON object only with action, target, public_text, and rationale."
+            content: "You are one Werewolf game agent. Return one JSON object only with action, target, public_text, and rationale. The word JSON is required. In day phase use speak, accuse, investigate, or vote. In wolf phase use wolf-kill, choose a non-partner target, and keep public_text empty."
           },
           {
             role: "user",
@@ -156,6 +195,73 @@ openai_turn_json() {
       '
 }
 
+normalize_turn_json() {
+  local raw_json="$1"
+  local raw_action raw_target raw_public_text raw_rationale
+  local action target public_text rationale
+
+  raw_action="$(jq -r '.action // "" | ascii_downcase | gsub("_"; "-")' <<<"${raw_json}")"
+  raw_target="$(jq -r '.target // ""' <<<"${raw_json}")"
+  raw_public_text="$(jq -r '.public_text // ""' <<<"${raw_json}")"
+  raw_rationale="$(jq -r '.rationale // ""' <<<"${raw_json}")"
+
+  case "${PHASE}" in
+    day)
+      case "${raw_action}" in
+        speak|accuse|investigate|vote)
+          action="${raw_action}"
+          ;;
+        *)
+          action="speak"
+          ;;
+      esac
+
+      if [[ "${action}" == "speak" ]]; then
+        target=""
+      else
+        target="$(normalize_target "${raw_target}")"
+      fi
+
+      public_text="${raw_public_text}"
+      if [[ -z "${public_text}" ]]; then
+        public_text="$(fallback_public_text "${action}" "${target}")"
+      fi
+      rationale="${raw_rationale:-No rationale returned.}"
+      ;;
+    wolf)
+      if [[ "${ROLE}" != "wolf" ]]; then
+        jq -n --arg action "noop" '{action: $action, target: "", public_text: "", rationale: "not a wolf"}'
+        return 0
+      fi
+
+      action="wolf-kill"
+      target="$(normalize_target "${raw_target}")"
+      public_text=""
+      rationale="${raw_rationale:-Wolf phase private action.}"
+      ;;
+    vote)
+      action="vote"
+      target="$(normalize_target "${raw_target}")"
+      public_text="${raw_public_text}"
+      if [[ -z "${public_text}" ]]; then
+        public_text="$(fallback_public_text "${action}" "${target}")"
+      fi
+      rationale="${raw_rationale:-No rationale returned.}"
+      ;;
+    *)
+      echo "unsupported phase: ${PHASE}" >&2
+      exit 2
+      ;;
+  esac
+
+  jq -n \
+    --arg action "${action}" \
+    --arg target "${target}" \
+    --arg public_text "${public_text}" \
+    --arg rationale "${rationale}" \
+    '{action: $action, target: $target, public_text: $public_text, rationale: $rationale}'
+}
+
 wait_for_pipe() {
   for _ in $(seq 1 100); do
     [[ -p "${ACTION_PIPE}" ]] && return 0
@@ -177,6 +283,8 @@ case "${LLM_PROVIDER}" in
     exit 2
     ;;
 esac
+
+turn_json="$(normalize_turn_json "${turn_json}")"
 
 action="$(jq -r '.action' <<<"${turn_json}")"
 target="$(jq -r '.target // ""' <<<"${turn_json}")"
