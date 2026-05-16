@@ -1,4 +1,33 @@
 export function classifyCommand(command) {
+  const roundPhase = command.match(/^referee round ([0-9]+) (discussion|voting|wolf)$/);
+  if (roundPhase) {
+    const [, round, phase] = roundPhase;
+    const titles = {
+      discussion: `Round ${round} Discussion`,
+      voting: `Round ${round} Voting`,
+      wolf: `Round ${round} Wolf Action`,
+    };
+    const subjects = {
+      discussion: "Public talk",
+      voting: "Public decision",
+      wolf: "Private wolves",
+    };
+    return { kind: "actions", title: titles[phase], subject: subjects[phase] };
+  }
+
+  const roundLog = command.match(/^referee round ([0-9]+) (discussion log|vote log|wolf log)$/);
+  if (roundLog) {
+    const [, round, logKind] = roundLog;
+    if (logKind === "wolf log") {
+      return { kind: "wolfChannel", title: `Round ${round} Wolf Channel`, subject: "Row-filtered view" };
+    }
+    return {
+      kind: "publicLog",
+      title: logKind === "discussion log" ? `Round ${round} Public Talk` : `Round ${round} Vote Tally`,
+      subject: "Federated view",
+    };
+  }
+
   if (command.endsWith("labctl up")) {
     return { kind: "start", title: "Start Lab", subject: "Containers" };
   }
@@ -112,6 +141,7 @@ export function summarizeStep(command, raw, exitCode = 0) {
 
   if (meta.kind === "publicLog") {
     summary.rows = pickArray(raw, (row) => row.public_text).map((row) => ({
+      round: String(row.round || ""),
       agent: row.agent_id,
       action: row.action,
       target: row.target || "",
@@ -124,6 +154,7 @@ export function summarizeStep(command, raw, exitCode = 0) {
   if (meta.kind === "wolfChannel") {
     summary.rows = pickArray(raw, (row) => row.action === "wolf-kill" || row.rationale).map(
       (row) => ({
+        round: String(row.round || ""),
         agent: row.agent_id,
         target: row.target || "",
         rationale: row.rationale || "",
@@ -135,6 +166,7 @@ export function summarizeStep(command, raw, exitCode = 0) {
 
   if (meta.kind === "fullLog") {
     summary.rows = pickArray(raw, (row) => row.rationale || row.public_text).map((row) => ({
+      round: String(row.round || ""),
       agent: row.agent_id,
       action: row.action,
       target: row.target || "",
@@ -170,7 +202,7 @@ export function summarizeStep(command, raw, exitCode = 0) {
       phase: row.phase || "",
       event: row.event || "",
       target: row.target || "",
-      votes: row.votes ? String(row.votes) : "",
+      count: String(row.votes || row.turns || ""),
     }));
     return summary;
   }

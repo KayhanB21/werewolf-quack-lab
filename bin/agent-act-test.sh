@@ -110,8 +110,8 @@ run_action \
   "I think agent-b is suspicious, so I will vote agent-b this round." \
   "${fake_bin}:${PATH}"
 
-if ! grep -Fq "'vote'" "${model_prose_sql}"; then
-  echo "model prose response should still normalize to a valid action" >&2
+if ! grep -Fq "'accuse'" "${model_prose_sql}"; then
+  echo "model discussion prose should normalize vote language to accuse" >&2
   exit 1
 fi
 

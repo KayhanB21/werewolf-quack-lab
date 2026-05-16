@@ -147,6 +147,36 @@ async function runStepCapture(command, args, env, res, shouldAbort) {
   });
 }
 
+async function runStepInCurrent(command, args, env, res, shouldAbort) {
+  return new Promise((resolve) => {
+    const child = registerChild(spawn(command, args, {
+      cwd: ROOT_DIR,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    }));
+
+    const stop = () => {
+      if (!child.killed) child.kill("SIGTERM");
+    };
+    shouldAbort.onAbort = stop;
+
+    child.stdout.on("data", (chunk) => {
+      writeEvent(res, "stdout", { data: stripAnsi(chunk.toString("utf8")) });
+    });
+    child.stderr.on("data", (chunk) => {
+      writeEvent(res, "stderr", { data: stripAnsi(chunk.toString("utf8")) });
+    });
+    child.on("error", (error) => {
+      writeEvent(res, "error", { message: error.message });
+      resolve(1);
+    });
+    child.on("close", (code) => {
+      shouldAbort.onAbort = null;
+      resolve(code ?? 1);
+    });
+  });
+}
+
 async function runBufferedStep(command, args, env) {
   return new Promise((resolve) => {
     const child = registerChild(spawn(command, args, {
@@ -257,34 +287,60 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
       data: `[referee] round ${round} starts with ${alive.join(", ")}\n`,
     });
 
-    for (const id of alive) {
-      if (isClosed()) return false;
-      const result = await runStep(
-        "./bin/labctl",
-        ["run-agent", id, "vote"],
-        { ...roundEnv, ACTIVE_PLAYER_IDS: alive.join(",") },
-        res,
-        shouldAbort,
-      );
-      if (result !== 0) return false;
-    }
-
-    const dayLog = await runStepCapture(
-      "./bin/labctl",
-      ["query", "public_log"],
-      roundEnv,
+    const discussionOk = await runAgentPhase(
+      `referee round ${round} discussion`,
+      alive,
+      "day",
+      { ...roundEnv, ACTIVE_PLAYER_IDS: alive.join(",") },
       res,
       shouldAbort,
+      isClosed,
     );
-    if (dayLog.code !== 0) return false;
+    if (!discussionOk) return false;
 
-    const dayVotes = pickRows(dayLog.stdout, "public_log").filter(
+    const discussionLog = await runFilteredQuery(
+      `referee round ${round} discussion log`,
+      "public_log",
+      roundEnv,
+      res,
+      (row) =>
+        Number(row.round) === round &&
+        row.action !== "vote" &&
+        alive.includes(row.agent_id),
+    );
+    if (discussionLog.code !== 0) return false;
+    history.push({
+      round,
+      phase: "discussion",
+      event: "talk",
+      turns: discussionLog.rows.length,
+    });
+
+    const voteOk = await runAgentPhase(
+      `referee round ${round} voting`,
+      alive,
+      "vote",
+      { ...roundEnv, ACTIVE_PLAYER_IDS: alive.join(",") },
+      res,
+      shouldAbort,
+      isClosed,
+    );
+    if (!voteOk) return false;
+
+    const dayLog = await runFilteredQuery(
+      `referee round ${round} vote log`,
+      "public_log",
+      roundEnv,
+      res,
       (row) =>
         Number(row.round) === round &&
         row.action === "vote" &&
         alive.includes(row.agent_id) &&
         alive.includes(row.target),
     );
+    if (dayLog.code !== 0) return false;
+
+    const dayVotes = dayLog.rows;
     const dayTarget = chooseTarget(dayVotes);
     if (dayTarget) {
       alive = alive.filter((id) => id !== dayTarget.target);
@@ -312,34 +368,31 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
     }
 
     const liveWolves = alive.filter((id) => roles.get(id) === "wolf");
-    for (const id of liveWolves) {
-      if (isClosed()) return false;
-      const result = await runStep(
-        "./bin/labctl",
-        ["run-agent", id, "wolf"],
-        { ...roundEnv, ACTIVE_PLAYER_IDS: alive.join(",") },
-        res,
-        shouldAbort,
-      );
-      if (result !== 0) return false;
-    }
-
-    const wolfLog = await runStepCapture(
-      "./bin/labctl",
-      ["query", "wolf_channel"],
-      roundEnv,
+    const wolfOk = await runAgentPhase(
+      `referee round ${round} wolf`,
+      liveWolves,
+      "wolf",
+      { ...roundEnv, ACTIVE_PLAYER_IDS: alive.join(",") },
       res,
       shouldAbort,
+      isClosed,
     );
-    if (wolfLog.code !== 0) return false;
+    if (!wolfOk) return false;
 
-    const wolfVotes = pickRows(wolfLog.stdout, "wolf_channel").filter(
+    const wolfLog = await runFilteredQuery(
+      `referee round ${round} wolf log`,
+      "wolf_channel",
+      roundEnv,
+      res,
       (row) =>
         Number(row.round) === round &&
         row.action === "wolf-kill" &&
         alive.includes(row.agent_id) &&
         alive.includes(row.target),
     );
+    if (wolfLog.code !== 0) return false;
+
+    const wolfVotes = wolfLog.rows;
     const wolfTarget = chooseTarget(wolfVotes);
     if (wolfTarget) {
       alive = alive.filter((id) => id !== wolfTarget.target);
@@ -385,6 +438,44 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
   writeEvent(res, "stdout", { data: `${JSON.stringify([result])}\n` });
   writeEvent(res, "exit", { code: 0, signal: null });
   return true;
+}
+
+async function runAgentPhase(command, ids, phase, env, res, shouldAbort, isClosed) {
+  writeEvent(res, "step", { command });
+
+  for (const id of ids) {
+    if (isClosed()) return false;
+    const code = await runStepInCurrent(
+      "./bin/labctl",
+      ["run-agent", id, phase],
+      env,
+      res,
+      shouldAbort,
+    );
+    if (code !== 0) {
+      writeEvent(res, "exit", { code, signal: null });
+      return false;
+    }
+  }
+
+  writeEvent(res, "exit", { code: 0, signal: null });
+  return true;
+}
+
+async function runFilteredQuery(command, queryName, env, res, predicate) {
+  writeEvent(res, "step", { command });
+  const result = await runBufferedStep("./bin/labctl", ["query", queryName], env);
+
+  if (result.code !== 0) {
+    writeEvent(res, "stderr", { data: `${result.stdout}${result.stderr}` });
+    writeEvent(res, "exit", { code: result.code, signal: null });
+    return { code: result.code, rows: [] };
+  }
+
+  const rows = pickRows(result.stdout, queryName).filter(predicate);
+  writeEvent(res, "stdout", { data: `${JSON.stringify(rows)}\n` });
+  writeEvent(res, "exit", { code: 0, signal: null });
+  return { code: 0, rows };
 }
 
 async function handleExport(req, res) {

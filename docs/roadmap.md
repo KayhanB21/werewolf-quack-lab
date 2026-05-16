@@ -56,11 +56,13 @@ Status: first version complete.
 
 - Start a clean lab for `Play Game`.
 - Track alive players outside the player containers.
+- Run public discussion actions only for alive players.
+- Query current-round discussion rows through `public_log`.
 - Run vote actions only for alive players.
-- Query `public_log` through Quack after votes.
+- Query current-round vote rows through `public_log`.
 - Apply plurality day eliminations.
 - Run wolf actions only for alive wolves.
-- Query `wolf_channel` through Quack after wolf actions.
+- Query current-round wolf rows through `wolf_channel`.
 - Apply plurality wolf kills.
 - Declare village when all wolves are gone.
 - Declare wolves when wolves reach parity with town.

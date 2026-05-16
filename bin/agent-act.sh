@@ -176,9 +176,7 @@ text_turn_json() {
       public_text=""
       ;;
     day)
-      if [[ "${lower}" == *"vote"* ]]; then
-        action="vote"
-      elif [[ "${lower}" == *"accuse"* || "${lower}" == *"suspect"* ]]; then
+      if [[ "${lower}" == *"vote"* || "${lower}" == *"accuse"* || "${lower}" == *"suspect"* ]]; then
         action="accuse"
       elif [[ "${lower}" == *"investigate"* || "${lower}" == *"check"* ]]; then
         action="investigate"
@@ -254,7 +252,7 @@ openai_turn_json() {
         messages: [
           {
             role: "system",
-            content: "You are one Werewolf game agent. Return one JSON object only with action, target, public_text, and rationale. The word JSON is required. In day phase use speak, accuse, investigate, or vote. In wolf phase use wolf-kill, choose a non-partner target, and keep public_text empty."
+            content: "You are one Werewolf game agent. Return one JSON object only with action, target, public_text, and rationale. The word JSON is required. In day phase, this is public discussion only: use speak, accuse, or investigate, and do not vote. In vote phase, use vote. In wolf phase, use wolf-kill, choose a non-partner target, and keep public_text empty. Make public_text a short natural sentence from this agent."
           },
           {
             role: "user",
@@ -282,19 +280,23 @@ openai_turn_json() {
 
 normalize_turn_json() {
   local raw_json="$1"
-  local raw_action raw_target raw_public_text raw_rationale
+  local raw_action raw_target raw_public_text raw_rationale raw_public_lower
   local action target public_text rationale
 
   raw_action="$(jq -r '.action // "" | ascii_downcase | gsub("_"; "-")' <<<"${raw_json}")"
   raw_target="$(jq -r '.target // ""' <<<"${raw_json}")"
   raw_public_text="$(jq -r '.public_text // ""' <<<"${raw_json}")"
+  raw_public_lower="$(tr '[:upper:]' '[:lower:]' <<<"${raw_public_text}")"
   raw_rationale="$(jq -r '.rationale // ""' <<<"${raw_json}")"
 
   case "${PHASE}" in
     day)
       case "${raw_action}" in
-        speak|accuse|investigate|vote)
+        speak|accuse|investigate)
           action="${raw_action}"
+          ;;
+        vote)
+          action="accuse"
           ;;
         *)
           action="speak"
@@ -308,6 +310,9 @@ normalize_turn_json() {
       fi
 
       public_text="${raw_public_text}"
+      if [[ "${raw_action}" == "vote" || "${raw_public_lower}" == *"vote"* ]]; then
+        public_text=""
+      fi
       if [[ -z "${public_text}" ]]; then
         public_text="$(fallback_public_text "${action}" "${target}")"
       fi

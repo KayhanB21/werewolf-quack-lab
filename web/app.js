@@ -292,7 +292,8 @@ function renderRows(summary) {
   }
 
   if (summary.kind === "publicLog") {
-    return table(["Agent", "Action", "Target", "Public text"], summary.rows, (row) => [
+    return table(["Round", "Agent", "Action", "Target", "Public text"], summary.rows, (row) => [
+      row.round,
       row.agent,
       row.action,
       row.target,
@@ -301,7 +302,8 @@ function renderRows(summary) {
   }
 
   if (summary.kind === "wolfChannel") {
-    return table(["Wolf", "Target", "Private rationale"], summary.rows, (row) => [
+    return table(["Round", "Wolf", "Target", "Private rationale"], summary.rows, (row) => [
+      row.round,
       row.agent,
       row.target,
       row.rationale,
@@ -310,19 +312,19 @@ function renderRows(summary) {
 
   if (summary.kind === "fullLog") {
     return table(
-      ["Agent", "Action", "Target", "Public text", "Private rationale"],
+      ["Round", "Agent", "Action", "Target", "Public text", "Private rationale"],
       summary.rows,
-      (row) => [row.agent, row.action, row.target, row.text, row.rationale],
+      (row) => [row.round, row.agent, row.action, row.target, row.text, row.rationale],
     );
   }
 
   if (summary.kind === "autoGame") {
-    return table(["Round", "Phase", "Event", "Target", "Votes"], summary.rows, (row) => [
+    return table(["Round", "Phase", "Event", "Target", "Count"], summary.rows, (row) => [
       row.round,
       row.phase,
       row.event,
       row.target,
-      row.votes,
+      row.count,
     ]);
   }
 

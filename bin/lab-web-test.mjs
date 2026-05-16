@@ -117,23 +117,34 @@ assert.equal(
 );
 
 const actionSummary = summarizeStep(
-  "./bin/labctl run-day",
-  "[agent-a] wrote speak for phase=day\n[agent-b] wrote vote for phase=day\n",
+  "referee round 1 discussion",
+  "[agent-a] wrote speak for phase=day\n[agent-b] wrote accuse for phase=day\n",
 );
 assert.equal(actionSummary.rows.length, 2);
-assert.equal(actionSummary.rows[1].action, "vote");
+assert.equal(actionSummary.title, "Round 1 Discussion");
+assert.equal(actionSummary.rows[1].action, "accuse");
+
+const voteSummary = summarizeStep(
+  "referee round 1 voting",
+  "[agent-a] wrote vote for phase=vote\n[agent-b] wrote vote for phase=vote\n",
+);
+assert.equal(voteSummary.title, "Round 1 Voting");
+assert.equal(voteSummary.rows[0].phase, "vote");
 
 const publicSummary = summarizeStep(
-  "./bin/labctl query public_log",
+  "referee round 1 discussion log",
   `[]\n[{"round":1,"agent_id":"agent-a","action":"speak","target":null,"public_text":"agent-a checks the record"}]\n[{"message_type":"CONNECTION_REQUEST"}]\n`,
 );
 assert.equal(publicSummary.rows.length, 1);
+assert.equal(publicSummary.title, "Round 1 Public Talk");
+assert.equal(publicSummary.rows[0].round, "1");
 assert.equal(publicSummary.rows[0].text, "agent-a checks the record");
 
 const wolfSummary = summarizeStep(
-  "./bin/labctl query wolf_channel",
+  "referee round 1 wolf log",
   `[gateway] running wolf_channel\n[{"round":1,"agent_id":"agent-a","action":"wolf-kill","target":"agent-b","rationale":"private"}]\n`,
 );
+assert.equal(wolfSummary.title, "Round 1 Wolf Channel");
 assert.equal(wolfSummary.rows[0].target, "agent-b");
 
 const fullLogSummary = summarizeStep(
@@ -145,10 +156,11 @@ assert.equal(fullLogSummary.rows[0].rationale, "private note");
 
 const gameSummary = summarizeStep(
   "referee auto-game",
-  `[{"winner":"village","reason":"all wolves were eliminated","rounds":2,"alive":["agent-b"],"history":[{"round":1,"phase":"day","event":"vote","target":"agent-a","votes":2}]}]\n`,
+  `[{"winner":"village","reason":"all wolves were eliminated","rounds":2,"alive":["agent-b"],"history":[{"round":1,"phase":"discussion","event":"talk","turns":3},{"round":1,"phase":"day","event":"vote","target":"agent-a","votes":2}]}]\n`,
 );
 assert.equal(gameSummary.metrics[0].value, "village");
-assert.equal(gameSummary.rows[0].target, "agent-a");
+assert.equal(gameSummary.rows[0].count, "3");
+assert.equal(gameSummary.rows[1].target, "agent-a");
 
 const deniedSummary = summarizeStep(
   "./bin/labctl query denied_private_table",

@@ -101,10 +101,10 @@ For auto-play, the referee passes `ACTIVE_PLAYER_IDS` into `run-agent`. `labctl`
 maps that to `PLAYER_IDS` inside the selected container, so eliminated players are
 not chosen as targets by later actions.
 
-Model output is normalized before the write. Day and vote actions are constrained
-to the allowed public action set, wolf-phase actions become private `wolf-kill`
-intents, wolf targets must be valid non-partner players, and wolf public text is
-discarded.
+Model output is normalized before the write. Day actions are discussion only and
+can produce `speak`, `accuse`, or `investigate`. Vote actions are explicit
+`vote` intents. Wolf-phase actions become private `wolf-kill` intents, wolf
+targets must be valid non-partner players, and wolf public text is discarded.
 
 ## Model Providers
 
@@ -168,15 +168,17 @@ smoke.
 `Play Game` does this:
 
 1. Run `labctl down` and `labctl up`.
-2. For each round, ask every alive player to run `vote`.
-3. Query `public_log` through the gateway.
-4. Eliminate the plurality vote target, if any.
-5. If wolves are gone, village wins.
-6. Ask each alive wolf to run `wolf`.
-7. Query `wolf_channel` through the gateway.
-8. Kill the plurality wolf target, if any.
-9. If wolves have parity with town, wolves win.
-10. Stop after the max round limit and mark the result undecided.
+2. For each round, ask every alive player to run public discussion with `day`.
+3. Query the current round's public discussion rows through `public_log`.
+4. Ask every alive player to run `vote`.
+5. Query the current round's vote rows through `public_log`.
+6. Eliminate the plurality vote target, if any.
+7. If wolves are gone, village wins.
+8. Ask each alive wolf to run `wolf`.
+9. Query the current round's wolf rows through `wolf_channel`.
+10. Kill the plurality wolf target, if any.
+11. If wolves have parity with town, wolves win.
+12. Stop after the max round limit and mark the result undecided.
 
 The referee is deliberately small. It proves that real containers, real Quack
 queries, local write boundaries, and federated policy checks can support a full

@@ -26,9 +26,9 @@ runner.
 - Optional post-game audit view through `POST_GAME=true`.
 - Browser controls for `Play Game`, `Audit Log`, `Download JSON`, `Stop`, plus
   collapsible manual commands.
-- A lightweight auto-play referee that starts the lab, runs vote and wolf phases,
-  tracks alive players, applies plurality eliminations, and declares village,
-  wolves, or undecided after the max round limit.
+- A lightweight auto-play referee that starts the lab, runs discussion, vote, and
+  wolf phases, tracks alive players, applies plurality eliminations, and declares
+  village, wolves, or undecided after the max round limit.
 - Server-side Quack authentication and authorization callbacks.
 - Quack protocol logging from the gateway side.
 
@@ -99,8 +99,8 @@ Main controls:
 
 - `Players`: choose 3 to 12 generated players and set each role.
 - `Provider`: choose `Scripted`, `oMLX`, `Compatible`, or `OpenAI`.
-- `Play Game`: runs the lightweight referee until village wins, wolves win, or
-  the max round limit is reached.
+- `Play Game`: runs the lightweight referee through discussion, vote, and wolf
+  phases until village wins, wolves win, or the max round limit is reached.
 - `Audit Log`: queries `full_log`, which returns private rationale only when
   post-game audit is enabled.
 - `Download JSON`: exports nodes, public log, wolf channel, audit log, roster,
