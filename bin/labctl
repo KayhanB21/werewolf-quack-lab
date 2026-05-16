@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONFIG_PATH="${CONFIG_PATH:-config/game.sample.json}"
+OUT_DIR="${OUT_DIR:-.generated}"
+ROUND="${ROUND:-1}"
+COMPOSE_FILES=(-f docker-compose.yml -f "${OUT_DIR}/docker-compose.yml")
+
+cd "${ROOT_DIR}"
+
+usage() {
+  cat <<'USAGE'
+Usage: ./bin/labctl <command>
+
+Commands:
+  generate        Generate .generated/docker-compose.yml from CONFIG_PATH
+  up              Generate and start the lab
+  down            Stop the generated lab and remove volumes
+  run-day         Ask every player container to take one day action
+  run-wolf        Ask every wolf container to take one wolf action
+  query <name>    Run a gateway query
+  smoke           Generate, start, run agent actions, and verify Quack behavior
+  config          Render the merged Docker Compose config
+
+Environment:
+  CONFIG_PATH     Config JSON path, default config/game.sample.json
+  ROUND           Round number for run-day/run-wolf, default 1
+USAGE
+}
+
+ensure_generated() {
+  if [[ ! -f "${OUT_DIR}/docker-compose.yml" || ! -f "${OUT_DIR}/players.json" ]]; then
+    ./bin/generate-compose.sh --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}"
+  fi
+}
+
+compose() {
+  docker compose "${COMPOSE_FILES[@]}" "$@"
+}
+
+players_matching() {
+  local filter="$1"
+  jq -r "${filter}" "${OUT_DIR}/players.json"
+}
+
+run_agent_action() {
+  local phase="$1"
+  local filter="$2"
+  ensure_generated
+  while IFS= read -r id; do
+    [[ -z "${id}" ]] && continue
+    echo "[labctl] ${id} acts in ${phase}"
+    compose exec -T "${id}" /app/bin/agent-act.sh --phase "${phase}" --round "${ROUND}" < /dev/null
+  done < <(players_matching "${filter}")
+}
+
+case "${1:-}" in
+  generate)
+    ./bin/generate-compose.sh --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}"
+    ;;
+  up)
+    ./bin/generate-compose.sh --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}"
+    compose up --build -d --force-recreate
+    ;;
+  down)
+    ensure_generated
+    compose down -v
+    ;;
+  run-day)
+    run_agent_action "day" '.[].id'
+    ;;
+  run-wolf)
+    run_agent_action "wolf" '.[] | select(.role == "wolf") | .id'
+    ;;
+  query)
+    ensure_generated
+    query_name="${2:-public_log}"
+    compose exec gateway /app/bin/gateway-query.sh "${query_name}"
+    ;;
+  smoke)
+    ./bin/generate-compose.sh --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}"
+    compose up --build -d --force-recreate
+    run_agent_action "day" '.[].id'
+    run_agent_action "wolf" '.[] | select(.role == "wolf") | .id'
+    compose exec -T gateway /app/bin/gateway-smoke-test.sh
+    ;;
+  config)
+    ensure_generated
+    compose config
+    ;;
+  ""|-h|--help|help)
+    usage
+    ;;
+  *)
+    echo "unknown command: $1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

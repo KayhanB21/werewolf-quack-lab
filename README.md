@@ -9,21 +9,27 @@ DuckDB client.
 
 ## What Works In This Lab
 
-- Five native DuckDB player nodes, each running `quack_serve(...)`.
+- Config-driven native DuckDB player nodes, each running `quack_serve(...)`.
 - One gateway container that queries the player nodes with real `quack_query(...)`.
 - Per-player private tables: `self`, `knowledge`, `suspicions`, `intents`, `votes`.
+- A container-local agent action entry point, `agent-act.sh`, that writes actions
+  into that player's own running DuckDB process.
+- Stub and OpenAI-compatible agent modes. The default smoke test uses `stub` so
+  it is deterministic and does not need network access.
 - Public views that expose only safe columns during play.
 - A wolf-channel view that row-filters locally based on the player's own role.
 - Server-side Quack authentication and authorization callbacks.
 - Quack protocol logging from the gateway side.
 
-This is not yet the full LLM game controller. It is the smallest useful real-Quack
-lab: prove the transport, policies, row filtering, federation shape, and logs with
-native DuckDB servers.
+This is not yet the full Werewolf game controller. It is the smallest useful
+real-Quack lab: generate an arbitrary player set, start native DuckDB servers,
+ask each player container to take actions, then prove the transport, policies,
+row filtering, federation shape, and logs with real Quack.
 
 ## Requirements
 
 - Docker with Compose v2.
+- `jq` on the host.
 - Network access during image build so Docker can download the DuckDB CLI and the
   Quack extension from DuckDB's extension repository.
 
@@ -35,37 +41,41 @@ predictable there; Docker Desktop will emulate it on Apple Silicon.
 ## Quick Start
 
 ```bash
-docker compose up --build -d
-docker compose exec gateway /app/bin/gateway-query.sh whoami
-docker compose exec gateway /app/bin/gateway-query.sh public_log
-docker compose exec gateway /app/bin/gateway-query.sh wolf_channel
-docker compose exec gateway /app/bin/gateway-query.sh denied_private_table
+./bin/labctl smoke
 ```
 
-Expected behavior:
+The smoke test:
 
-- `whoami` returns one row per player node.
-- `public_log` returns public statements from all five players and no rationale.
-- `wolf_channel` queries all five players, but only wolf nodes return rows.
-- `denied_private_table` fails because the player authorization callback rejects
+- generates `.generated/docker-compose.yml` from `config/game.sample.json`
+- starts one gateway and one container per configured player
+- asks every player container to take one day action
+- asks every wolf container to take one wolf action
+- verifies `whoami` returns one row per player node
+- verifies `public_log` returns public statements and no rationale
+- verifies `wolf_channel` queries every player, but only wolf nodes return rows
+- verifies `denied_private_table` fails because the player authorization callback rejects
   direct access to the private `intents` table.
+
+Manual flow:
+
+```bash
+./bin/labctl generate
+./bin/labctl up
+./bin/labctl run-day
+./bin/labctl run-wolf
+./bin/labctl query public_log
+./bin/labctl query wolf_channel
+./bin/labctl query denied_private_table
+```
 
 Clean up:
 
 ```bash
-docker compose down -v
+./bin/labctl down
 ```
 
-Run the smoke test:
-
-```bash
-./bin/smoke-test.sh
-```
-
-The smoke test boots the lab, validates five `whoami()` responses, confirms that
-public federation hides `rationale`, confirms that the wolf channel returns only
-the two wolf nodes, confirms that post-game rationale is closed by default, and
-checks that direct `intents` access is rejected by Quack authorization.
+To add players, edit `config/game.sample.json`. The generated Compose file is not
+source controlled.
 
 ## How It Maps To The Browser Demo
 
@@ -76,6 +86,7 @@ checks that direct `intents` access is rejected by Quack authorization.
 | `postMessage` request/response | Quack HTTP protocol |
 | JS token/policy shim | Quack auth/authz callbacks |
 | Gateway worker fan-out | Gateway DuckDB running `quack_query(...)` |
+| Browser orchestrator asking an agent to act | `labctl run-day` / `run-wolf` invoking `agent-act.sh` inside each player container |
 | `wolf-team-read` row predicate | `wolf_channel` view checks local `self.role` |
 
 The default post still matters because it runs for anyone in one browser tab.
@@ -83,14 +94,17 @@ This lab is for readers who want the real distributed version.
 
 ## Commands
 
-The gateway script accepts these query names:
+`labctl` accepts these commands:
 
 ```text
-whoami
-public_log
-wolf_channel
-full_log
-denied_private_table
+generate
+up
+down
+run-day
+run-wolf
+query <whoami|public_log|wolf_channel|full_log|denied_private_table>
+smoke
+config
 ```
 
 `full_log` reads from `post_game_intents`. By default the player nodes start with
@@ -108,6 +122,10 @@ This is a local lab, not a production deployment.
 - Authentication is backed by a `quack_tokens` table.
 - Authorization is a SQL macro that allowlists read-only queries against exposed
   views and rejects raw private tables.
+- Agent actions write through a local FIFO into the DuckDB process already
+  running inside the player container. That avoids DuckDB file-lock conflicts and
+  keeps action writes local to the player node rather than granting the gateway a
+  write path.
 - There is no TLS in the lab. Put a reverse proxy in front of Quack for anything
   beyond local development.
 

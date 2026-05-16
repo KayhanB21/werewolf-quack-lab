@@ -6,15 +6,13 @@ DATA_DIR="${DATA_DIR:-/data}"
 NODE_ID="${NODE_ID:?NODE_ID is required}"
 ROLE="${ROLE:?ROLE is required}"
 PARTNERS="${PARTNERS:-}"
+PLAYER_IDS="${PLAYER_IDS:?PLAYER_IDS is required}"
 QUACK_PORT="${QUACK_PORT:-9494}"
 QUACK_TOKEN="${QUACK_TOKEN:-${NODE_ID}-dev-token}"
-SEED_SECOND="${SEED_SECOND:-00}"
-PUBLIC_TEXT="${PUBLIC_TEXT:-I am watching the table.}"
-RATIONALE_TEXT="${RATIONALE_TEXT:-Seeded lab rationale.}"
-WOLF_TARGET="${WOLF_TARGET:-agent-b}"
 POST_GAME="${POST_GAME:-false}"
 DB_PATH="${DB_PATH:-${DATA_DIR}/${NODE_ID}.duckdb}"
 INIT_SQL="/tmp/${NODE_ID}-init.sql"
+ACTION_PIPE="${ACTION_PIPE:-/tmp/${NODE_ID}-duckdb.fifo}"
 
 mkdir -p "${DATA_DIR}"
 
@@ -108,40 +106,6 @@ INSERT INTO self VALUES ('${NODE_ID}', '${ROLE}', ${PARTNER_SQL});
 INSERT INTO game_flags VALUES (${POST_GAME_SQL});
 INSERT INTO quack_tokens VALUES ('${QUACK_TOKEN}', 'gateway');
 
-INSERT INTO intents (
-  round, agent_id, action, target, rationale, public_text, decided_at
-) VALUES (
-  1,
-  '${NODE_ID}',
-  'speak',
-  NULL,
-  '${RATIONALE_TEXT}',
-  '${PUBLIC_TEXT}',
-  TIMESTAMP '2026-05-15 04:56:${SEED_SECOND}'
-);
-
-INSERT INTO intents (
-  round, agent_id, action, target, rationale, public_text, decided_at
-)
-SELECT
-  1,
-  '${NODE_ID}',
-  'wolf-kill',
-  '${WOLF_TARGET}',
-  'Wolf team proposal from ${NODE_ID}: remove ${WOLF_TARGET}.',
-  NULL,
-  TIMESTAMP '2026-05-15 04:55:${SEED_SECOND}'
-WHERE '${ROLE}' = 'wolf';
-
-INSERT INTO suspicions VALUES (
-  1,
-  '${NODE_ID}',
-  '${WOLF_TARGET}',
-  CASE WHEN '${ROLE}' = 'wolf' THEN 0.22 ELSE 0.64 END,
-  '${NODE_ID} seeded suspicion for the real Quack lab.',
-  TIMESTAMP '2026-05-15 04:57:${SEED_SECOND}'
-);
-
 CREATE OR REPLACE VIEW public_intents AS
 SELECT round, agent_id, action, target, public_text, decided_at
 FROM intents
@@ -194,5 +158,15 @@ SQL
 
 echo "[${NODE_ID}] starting DuckDB Quack server on quack:0.0.0.0:${QUACK_PORT}"
 echo "[${NODE_ID}] database: ${DB_PATH}"
+echo "[${NODE_ID}] action pipe: ${ACTION_PIPE}"
 
-tail -f /dev/null | "${DUCKDB_BIN}" -init "${INIT_SQL}" "${DB_PATH}"
+rm -f "${ACTION_PIPE}"
+mkfifo "${ACTION_PIPE}"
+chmod 666 "${ACTION_PIPE}"
+
+{
+  cat "${INIT_SQL}"
+  while true; do
+    cat "${ACTION_PIPE}"
+  done
+} | "${DUCKDB_BIN}" "${DB_PATH}"

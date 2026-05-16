@@ -9,13 +9,21 @@ QUERY_SQL="/tmp/gateway-${QUERY_NAME}.sql"
 
 mkdir -p "${DATA_DIR}"
 
-PLAYERS=(
-  "agent-a:${AGENT_A_TOKEN:-agent-a-dev-token}"
-  "agent-b:${AGENT_B_TOKEN:-agent-b-dev-token}"
-  "agent-c:${AGENT_C_TOKEN:-agent-c-dev-token}"
-  "agent-d:${AGENT_D_TOKEN:-agent-d-dev-token}"
-  "agent-e:${AGENT_E_TOKEN:-agent-e-dev-token}"
-)
+load_players() {
+  if [[ -n "${PLAYERS_JSON:-}" ]]; then
+    mapfile -t PLAYERS < <(jq -r '.[] | "\(.id):\(.token)"' <<<"${PLAYERS_JSON}")
+  else
+    PLAYERS=(
+      "agent-a:${AGENT_A_TOKEN:-agent-a-dev-token}"
+      "agent-b:${AGENT_B_TOKEN:-agent-b-dev-token}"
+      "agent-c:${AGENT_C_TOKEN:-agent-c-dev-token}"
+      "agent-d:${AGENT_D_TOKEN:-agent-d-dev-token}"
+      "agent-e:${AGENT_E_TOKEN:-agent-e-dev-token}"
+    )
+  fi
+}
+
+load_players
 
 case "${QUERY_NAME}" in
   whoami)
@@ -74,13 +82,16 @@ SQL
 }
 
 if [[ "${QUERY_NAME}" == "denied_private_table" ]]; then
+  first_player="${PLAYERS[0]}"
+  first_host="${first_player%%:*}"
+  first_token="${first_player#*:}"
   cat >> "${QUERY_SQL}" <<SQL
 
 SELECT *
 FROM quack_query(
-  'quack:agent-a:9494',
+  'quack:${first_host}:9494',
   '${REMOTE_SQL}',
-  token => '${AGENT_A_TOKEN:-agent-a-dev-token}',
+  token => '${first_token}',
   disable_ssl => true
 );
 SQL

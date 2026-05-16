@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-docker compose up --build -d
-docker compose exec -T gateway /app/bin/gateway-smoke-test.sh
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+"${ROOT_DIR}/bin/generated-compose-test.sh"
+"${ROOT_DIR}/bin/labctl" smoke

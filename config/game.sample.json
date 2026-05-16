@@ -1,0 +1,15 @@
+{
+  "game_id": "werewolf-quack-lab",
+  "players": [
+    { "id": "agent-a", "role": "wolf" },
+    { "id": "agent-b", "role": "villager" },
+    { "id": "agent-c", "role": "seer" },
+    { "id": "agent-d", "role": "wolf" },
+    { "id": "agent-e", "role": "doctor" }
+  ],
+  "model": {
+    "provider": "stub",
+    "model": "stub-werewolf-v1",
+    "base_url": "https://api.openai.com/v1"
+  }
+}

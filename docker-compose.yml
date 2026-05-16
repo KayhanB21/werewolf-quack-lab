@@ -1,96 +1,6 @@
 name: werewolf-quack-lab
 
-x-player: &player
-  platform: linux/amd64
-  build:
-    context: .
-    args:
-      DUCKDB_VERSION: ${DUCKDB_VERSION:-v1.5.2}
-  command: ["/app/bin/player-node.sh"]
-  expose:
-    - "9494"
-
 services:
-  agent-a:
-    <<: *player
-    hostname: agent-a
-    environment:
-      NODE_ID: agent-a
-      ROLE: wolf
-      PARTNERS: agent-d
-      QUACK_TOKEN: agent-a-dev-token
-      SEED_SECOND: "01"
-      PUBLIC_TEXT: "I want pressure on quiet voters before we tunnel anyone."
-      RATIONALE_TEXT: "As a wolf, I need to sound analytical while avoiding my partner."
-      WOLF_TARGET: agent-b
-      POST_GAME: ${POST_GAME:-false}
-    volumes:
-      - agent-a-data:/data
-
-  agent-b:
-    <<: *player
-    hostname: agent-b
-    environment:
-      NODE_ID: agent-b
-      ROLE: villager
-      PARTNERS: ""
-      QUACK_TOKEN: agent-b-dev-token
-      SEED_SECOND: "02"
-      PUBLIC_TEXT: "Agent A is framing the room too early."
-      RATIONALE_TEXT: "Agent A is steering without evidence, which is suspicious."
-      WOLF_TARGET: agent-c
-      POST_GAME: ${POST_GAME:-false}
-    volumes:
-      - agent-b-data:/data
-
-  agent-c:
-    <<: *player
-    hostname: agent-c
-    environment:
-      NODE_ID: agent-c
-      ROLE: seer
-      PARTNERS: ""
-      QUACK_TOKEN: agent-c-dev-token
-      SEED_SECOND: "03"
-      PUBLIC_TEXT: "I am tracking claims and vote movement."
-      RATIONALE_TEXT: "I should not reveal the seer role until the result matters."
-      WOLF_TARGET: agent-b
-      POST_GAME: ${POST_GAME:-false}
-    volumes:
-      - agent-c-data:/data
-
-  agent-d:
-    <<: *player
-    hostname: agent-d
-    environment:
-      NODE_ID: agent-d
-      ROLE: wolf
-      PARTNERS: agent-a
-      QUACK_TOKEN: agent-d-dev-token
-      SEED_SECOND: "04"
-      PUBLIC_TEXT: "Agent B is overreacting to a normal opening read."
-      RATIONALE_TEXT: "I need to defend Agent A softly without exposing the team."
-      WOLF_TARGET: agent-b
-      POST_GAME: ${POST_GAME:-false}
-    volumes:
-      - agent-d-data:/data
-
-  agent-e:
-    <<: *player
-    hostname: agent-e
-    environment:
-      NODE_ID: agent-e
-      ROLE: doctor
-      PARTNERS: ""
-      QUACK_TOKEN: agent-e-dev-token
-      SEED_SECOND: "05"
-      PUBLIC_TEXT: "The A/B conflict is useful, but I want a second wagon."
-      RATIONALE_TEXT: "As doctor, I need to avoid becoming the night target."
-      WOLF_TARGET: agent-b
-      POST_GAME: ${POST_GAME:-false}
-    volumes:
-      - agent-e-data:/data
-
   gateway:
     platform: linux/amd64
     build:
@@ -98,25 +8,8 @@ services:
       args:
         DUCKDB_VERSION: ${DUCKDB_VERSION:-v1.5.2}
     command: ["sleep", "infinity"]
-    depends_on:
-      - agent-a
-      - agent-b
-      - agent-c
-      - agent-d
-      - agent-e
-    environment:
-      AGENT_A_TOKEN: agent-a-dev-token
-      AGENT_B_TOKEN: agent-b-dev-token
-      AGENT_C_TOKEN: agent-c-dev-token
-      AGENT_D_TOKEN: agent-d-dev-token
-      AGENT_E_TOKEN: agent-e-dev-token
     volumes:
       - gateway-data:/data
 
 volumes:
-  agent-a-data:
-  agent-b-data:
-  agent-c-data:
-  agent-d-data:
-  agent-e-data:
   gateway-data:

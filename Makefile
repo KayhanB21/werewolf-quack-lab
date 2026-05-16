@@ -1,31 +1,31 @@
 .PHONY: up down logs test whoami public wolf full denied shell
 
 up:
-	docker compose up --build -d
+	./bin/labctl up
 
 down:
-	docker compose down -v
+	./bin/labctl down
 
 logs:
-	docker compose logs -f
+	docker compose -f docker-compose.yml -f .generated/docker-compose.yml logs -f
 
 test:
 	./bin/smoke-test.sh
 
 whoami:
-	docker compose exec gateway /app/bin/gateway-query.sh whoami
+	./bin/labctl query whoami
 
 public:
-	docker compose exec gateway /app/bin/gateway-query.sh public_log
+	./bin/labctl query public_log
 
 wolf:
-	docker compose exec gateway /app/bin/gateway-query.sh wolf_channel
+	./bin/labctl query wolf_channel
 
 full:
-	docker compose exec gateway /app/bin/gateway-query.sh full_log
+	./bin/labctl query full_log
 
 denied:
-	docker compose exec gateway /app/bin/gateway-query.sh denied_private_table
+	./bin/labctl query denied_private_table
 
 shell:
-	docker compose exec gateway bash
+	docker compose -f docker-compose.yml -f .generated/docker-compose.yml exec gateway bash

@@ -1,26 +1,70 @@
 # Architecture
 
 This lab keeps the same conceptual split as the browser post, but replaces the
-shimmed transport with real Quack.
+shimmed transport with real Quack and moves one-step agent actions into the
+player containers.
 
 ```text
+config/game.sample.json
+  -> bin/generate-compose.sh
+  -> .generated/docker-compose.yml
+
 gateway container
   DuckDB CLI
   LOAD quack
-  quack_query('quack:agent-a:9494', ...)
-  quack_query('quack:agent-b:9494', ...)
-  quack_query('quack:agent-c:9494', ...)
-  quack_query('quack:agent-d:9494', ...)
-  quack_query('quack:agent-e:9494', ...)
+  quack_query('quack:<player-id>:9494', ...) for every configured player
 
 agent-* containers
   DuckDB CLI
   LOAD quack
   private player tables
+  local SQL action pipe
+  agent-act.sh
   exposed views
   quack_authentication_function
   quack_authorization_function
   quack_serve('quack:0.0.0.0:9494')
+```
+
+## Generated Players
+
+Player services are generated from JSON config instead of being hand-written in
+Compose. To add players, add entries to `config/game.sample.json`:
+
+```json
+{ "id": "agent-f", "role": "villager" }
+```
+
+The generator computes wolf partners and creates one service and one Docker
+volume per player.
+
+## Container-Local Agent Actions
+
+DuckDB locks a database file while the Quack server process has it open, so a
+second `duckdb /data/agent-a.duckdb` process cannot safely write actions. Each
+player node therefore creates a local FIFO:
+
+```text
+/tmp/agent-a-duckdb.fifo
+```
+
+`agent-act.sh` writes SQL into that FIFO. The already-running DuckDB process reads
+the command and inserts the row. This keeps the action write inside the player
+container and avoids giving the gateway write access.
+
+The default provider is deterministic:
+
+```bash
+LLM_PROVIDER=stub
+```
+
+For real model calls, use the OpenAI-compatible mode:
+
+```bash
+LLM_PROVIDER=openai-compatible
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4o-mini
+LLM_API_KEY=...
 ```
 
 ## Player Node Boundary

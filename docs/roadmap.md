@@ -1,19 +1,23 @@
 # Roadmap
 
-## Phase 1: Real Quack Transport
+## Phase 1: Real Quack Transport And One-Step Agents
 
 Status: this repo.
 
 - Start five native DuckDB Quack servers.
 - Query them from a gateway DuckDB client.
+- Generate player services from JSON config.
+- Ask each player container to take a deterministic stub action.
+- Support OpenAI-compatible model calls from inside player containers.
 - Prove public federation, wolf row filtering, denied private-table access, and
   Quack logs.
 
 ## Phase 2: Real Game Controller
 
 - Port the browser orchestrator into a small controller service.
-- Keep LLM calls in the controller.
-- Write each agent action into that agent's Quack node.
+- Keep turn ordering in the controller.
+- Keep agent generation inside each player container.
+- Write each agent action into that agent's local DuckDB process.
 - Stream turns, federation rows, and Quack logs to the browser.
 
 ## Phase 3: Token-Scoped ACLs
