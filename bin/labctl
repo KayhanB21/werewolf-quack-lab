@@ -17,6 +17,8 @@ Commands:
   generate        Generate .generated/docker-compose.yml from CONFIG_PATH
   up              Generate and start the lab
   down            Stop the generated lab and remove volumes
+  run-agent <id> <phase>
+                  Ask one player container to take one action
   run-day         Ask every player container to take one day action
   run-wolf        Ask every wolf container to take one wolf action
   query <name>    Run a gateway query
@@ -44,6 +46,15 @@ players_matching() {
   jq -r "${filter}" "${OUT_DIR}/players.json"
 }
 
+all_player_ids() {
+  jq -r '[.[].id] | join(",")' "${OUT_DIR}/players.json"
+}
+
+player_exists() {
+  local id="$1"
+  jq -e --arg id "${id}" 'any(.[]; .id == $id)' "${OUT_DIR}/players.json" >/dev/null
+}
+
 run_agent_action() {
   local phase="$1"
   local filter="$2"
@@ -53,6 +64,34 @@ run_agent_action() {
     echo "[labctl] ${id} acts in ${phase}"
     compose exec -T "${id}" /app/bin/agent-act.sh --phase "${phase}" --round "${ROUND}" < /dev/null
   done < <(players_matching "${filter}")
+}
+
+run_one_agent_action() {
+  local id="$1"
+  local phase="$2"
+  local active_player_ids="${ACTIVE_PLAYER_IDS:-}"
+  ensure_generated
+
+  if ! player_exists "${id}"; then
+    echo "unknown player: ${id}" >&2
+    exit 2
+  fi
+
+  case "${phase}" in
+    day|vote|wolf) ;;
+    *)
+      echo "unknown phase: ${phase}" >&2
+      exit 2
+      ;;
+  esac
+
+  if [[ -z "${active_player_ids}" ]]; then
+    active_player_ids="$(all_player_ids)"
+  fi
+
+  echo "[labctl] ${id} acts in ${phase}"
+  compose exec -T -e "PLAYER_IDS=${active_player_ids}" "${id}" \
+    /app/bin/agent-act.sh --phase "${phase}" --round "${ROUND}" < /dev/null
 }
 
 case "${1:-}" in
@@ -66,6 +105,9 @@ case "${1:-}" in
   down)
     ensure_generated
     compose down -v
+    ;;
+  run-agent)
+    run_one_agent_action "${2:?run-agent requires a player id}" "${3:?run-agent requires a phase}"
     ;;
   run-day)
     run_agent_action "day" '.[].id'

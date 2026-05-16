@@ -100,4 +100,24 @@ if grep -Fq "Agent D is safe" "${model_wolf_sql}"; then
   exit 1
 fi
 
+model_prose_sql="${TMP_DIR}/model-prose.sql"
+run_action \
+  "day" \
+  "villager" \
+  "" \
+  "${model_prose_sql}" \
+  "openai-compatible" \
+  "I think agent-b is suspicious, so I will vote agent-b this round." \
+  "${fake_bin}:${PATH}"
+
+if ! grep -Fq "'vote'" "${model_prose_sql}"; then
+  echo "model prose response should still normalize to a valid action" >&2
+  exit 1
+fi
+
+if ! grep -Fq "'agent-b'" "${model_prose_sql}"; then
+  echo "model prose response should preserve an eligible target" >&2
+  exit 1
+fi
+
 echo "ok - agent action writer emits local DuckDB intents"

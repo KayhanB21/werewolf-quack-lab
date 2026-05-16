@@ -117,6 +117,7 @@ h1 {
   gap: 12px;
 }
 
+.players-field,
 .provider-field {
   min-width: 0;
   margin: 0;
@@ -124,11 +125,57 @@ h1 {
   border: 0;
 }
 
+.players-field legend,
 .provider-field legend {
   margin: 0 0 7px;
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 650;
+}
+
+.count-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.count-row span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.player-roster {
+  display: grid;
+  gap: 6px;
+  max-height: 214px;
+  overflow: auto;
+}
+
+.player-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  padding: 5px 6px 5px 10px;
+  border: 1px solid oklch(31% 0.014 165);
+  border-radius: 6px;
+  background: oklch(17% 0.012 165);
+}
+
+.player-row span {
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.player-row select {
+  height: 28px;
+  padding: 0 7px;
+  font-size: 0.76rem;
 }
 
 .provider-options {
@@ -215,6 +262,43 @@ label {
   align-items: end;
 }
 
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 28px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.check-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.check-row span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.advanced-settings {
+  border-top: 1px solid oklch(30% 0.014 165);
+  padding-top: 10px;
+}
+
+.advanced-settings summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.advanced-settings label {
+  margin-top: 10px;
+}
+
 input,
 select {
   width: 100%;
@@ -251,11 +335,32 @@ button:focus-visible {
   box-shadow: 0 0 0 3px oklch(73% 0.14 155 / 0.18);
 }
 
+.primary-actions,
 .button-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.primary-actions {
   margin-top: 16px;
+}
+
+.manual-actions {
+  margin-top: 12px;
+  border-top: 1px solid oklch(30% 0.014 165);
+  padding-top: 10px;
+}
+
+.manual-actions summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.manual-actions .button-grid {
+  margin-top: 10px;
 }
 
 button {
@@ -300,6 +405,12 @@ button:disabled {
 .discover-button {
   min-width: 0;
   padding: 0 8px;
+}
+
+.download-button {
+  color: oklch(86% 0.06 155);
+  border-color: oklch(42% 0.08 155);
+  background: oklch(21% 0.035 155);
 }
 
 .danger {

@@ -19,6 +19,15 @@
       <section class="workspace">
         <aside class="controls" aria-label="Lab controls">
           <form id="settings" class="settings">
+            <fieldset class="players-field">
+              <legend>Players</legend>
+              <label class="count-row">
+                <span>Count</span>
+                <input id="playerCount" name="playerCount" type="number" min="3" max="12" value="5" />
+              </label>
+              <div id="playerRoster" class="player-roster"></div>
+            </fieldset>
+
             <fieldset class="provider-field">
               <legend>Provider</legend>
               <div class="provider-options">
@@ -53,11 +62,6 @@
               </div>
             </fieldset>
 
-            <label>
-              Round
-              <input id="round" name="round" type="number" min="1" value="1" />
-            </label>
-
             <div class="model-row">
               <label>
                 Model
@@ -85,20 +89,42 @@
               API Key
               <input id="apiKey" name="apiKey" type="password" autocomplete="off" />
             </label>
+
+            <label class="check-row">
+              <input id="postGame" name="postGame" type="checkbox" />
+              <span>Post-game audit</span>
+            </label>
+
+            <details class="advanced-settings">
+              <summary>Advanced</summary>
+              <label>
+                Round ID
+                <input id="round" name="round" type="number" min="1" value="1" />
+              </label>
+            </details>
           </form>
 
-          <div class="button-grid" aria-label="Round actions">
-            <button type="button" data-action="start">Start</button>
-            <button type="button" data-action="day">Day</button>
-            <button type="button" data-action="publicLog">Public Log</button>
-            <button type="button" data-action="wolf">Wolf</button>
-            <button type="button" data-action="wolfChannel">Wolf Channel</button>
-            <button type="button" data-action="denied">Denied Scope</button>
-            <button class="primary" type="button" data-action="fullRound">Full Round</button>
-            <button type="button" data-action="whoami">Whoami</button>
-            <button type="button" data-action="smoke">Smoke</button>
+          <div class="primary-actions" aria-label="Round actions">
+            <button class="primary" type="button" data-action="playGame">Play Game</button>
+            <button type="button" data-action="fullLog">Audit Log</button>
+            <button class="download-button" type="button" data-download>Download JSON</button>
             <button class="danger" type="button" data-action="stop">Stop</button>
           </div>
+
+          <details class="manual-actions">
+            <summary>Manual steps</summary>
+            <div class="button-grid" aria-label="Manual round actions">
+              <button type="button" data-action="start">Start</button>
+              <button type="button" data-action="day">Day</button>
+              <button type="button" data-action="publicLog">Public Log</button>
+              <button type="button" data-action="wolf">Wolf</button>
+              <button type="button" data-action="wolfChannel">Wolf Channel</button>
+              <button type="button" data-action="denied">Denied Scope</button>
+              <button type="button" data-action="fullRound">Full Round</button>
+              <button type="button" data-action="whoami">Whoami</button>
+              <button type="button" data-action="smoke">Smoke</button>
+            </div>
+          </details>
         </aside>
 
         <section class="output" aria-label="Command output">

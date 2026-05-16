@@ -14,6 +14,9 @@ export function classifyCommand(command) {
   if (command.endsWith("labctl query wolf_channel")) {
     return { kind: "wolfChannel", title: "Wolf Channel", subject: "Row-filtered view" };
   }
+  if (command.endsWith("labctl query full_log")) {
+    return { kind: "fullLog", title: "Audit Log", subject: "Post-game view" };
+  }
   if (command.endsWith("labctl query whoami")) {
     return { kind: "whoami", title: "Whoami", subject: "Quack nodes" };
   }
@@ -22,6 +25,9 @@ export function classifyCommand(command) {
   }
   if (command.endsWith("labctl smoke")) {
     return { kind: "smoke", title: "Smoke Test", subject: "Assertions" };
+  }
+  if (command === "referee auto-game") {
+    return { kind: "autoGame", title: "Game Result", subject: "Referee" };
   }
   return { kind: "raw", title: command.replace(/^\.\//, ""), subject: "Command" };
 }
@@ -127,6 +133,18 @@ export function summarizeStep(command, raw, exitCode = 0) {
     return summary;
   }
 
+  if (meta.kind === "fullLog") {
+    summary.rows = pickArray(raw, (row) => row.rationale || row.public_text).map((row) => ({
+      agent: row.agent_id,
+      action: row.action,
+      target: row.target || "",
+      text: row.public_text || "",
+      rationale: row.rationale || "",
+    }));
+    summary.metrics.push({ label: "audit rows", value: String(summary.rows.length) });
+    return summary;
+  }
+
   if (meta.kind === "whoami") {
     summary.rows = pickArray(raw, (row) => row.name).map((row) => ({
       name: row.name,
@@ -134,6 +152,26 @@ export function summarizeStep(command, raw, exitCode = 0) {
       provider: row.provider,
     }));
     summary.metrics.push({ label: "nodes", value: String(summary.rows.length) });
+    return summary;
+  }
+
+  if (meta.kind === "autoGame") {
+    const result = pickArray(raw, (row) => row.winner)[0];
+    if (!result) {
+      summary.note = "No referee result found.";
+      return summary;
+    }
+    summary.metrics.push({ label: "winner", value: result.winner });
+    summary.metrics.push({ label: "rounds", value: String(result.rounds || 0) });
+    summary.metrics.push({ label: "alive", value: String(result.alive?.length || 0) });
+    summary.note = result.reason || "";
+    summary.rows = (result.history || []).map((row) => ({
+      round: String(row.round || ""),
+      phase: row.phase || "",
+      event: row.event || "",
+      target: row.target || "",
+      votes: row.votes ? String(row.votes) : "",
+    }));
     return summary;
   }
 

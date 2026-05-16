@@ -1,19 +1,23 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  buildGameConfig,
   buildLabEnv,
   getActionPlan,
   listActions,
   toHostModelUrl,
 } from "./lab-web-actions.mjs";
+import { extractJsonArrays } from "../web/flow.mjs";
 
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const WEB_DIR = path.join(ROOT_DIR, "web");
+const GENERATED_DIR = path.join(ROOT_DIR, ".generated");
+const WEB_CONFIG_PATH = path.join(GENERATED_DIR, "web-game.json");
 const PORT = Number(process.env.LAB_WEB_PORT || process.env.PORT || 5174);
 
 const MIME = new Map([
@@ -83,12 +87,79 @@ async function runStep(command, args, env, res, shouldAbort) {
   });
 }
 
+async function runStepCapture(command, args, env, res, shouldAbort) {
+  writeEvent(res, "step", { command: [command, ...args].join(" ") });
+
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: ROOT_DIR,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+
+    const stop = () => {
+      if (!child.killed) child.kill("SIGTERM");
+    };
+    shouldAbort.onAbort = stop;
+
+    child.stdout.on("data", (chunk) => {
+      const data = stripAnsi(chunk.toString("utf8"));
+      stdout += data;
+      writeEvent(res, "stdout", { data });
+    });
+    child.stderr.on("data", (chunk) => {
+      const data = stripAnsi(chunk.toString("utf8"));
+      stderr += data;
+      writeEvent(res, "stderr", { data });
+    });
+    child.on("error", (error) => {
+      stderr += error.message;
+      writeEvent(res, "error", { message: error.message });
+      resolve({ code: 1, stdout, stderr });
+    });
+    child.on("close", (code, signal) => {
+      shouldAbort.onAbort = null;
+      writeEvent(res, "exit", { code, signal });
+      resolve({ code: code ?? 1, stdout, stderr });
+    });
+  });
+}
+
+async function runBufferedStep(command, args, env) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: ROOT_DIR,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdout += stripAnsi(chunk.toString("utf8"));
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += stripAnsi(chunk.toString("utf8"));
+    });
+    child.on("error", (error) => {
+      stderr += error.message;
+      resolve({ code: 1, stdout, stderr });
+    });
+    child.on("close", (code) => {
+      resolve({ code: code ?? 1, stdout, stderr });
+    });
+  });
+}
+
 async function handleRun(req, res) {
   let body;
   let plan;
   try {
     body = await readJson(req);
     plan = getActionPlan(body.action);
+    body.configPath = await writeRuntimeConfig(body);
     buildLabEnv(body, process.env, { requireModel: plan.requiresModel !== false });
   } catch (error) {
     sendJson(res, 400, { error: error.message });
@@ -117,6 +188,15 @@ async function handleRun(req, res) {
     round: env.ROUND,
   });
 
+  if (plan.special === "autoGame") {
+    const ok = await runAutoGame(body, env, res, shouldAbort, () => closed);
+    if (!closed) {
+      writeEvent(res, "done", { ok });
+      res.end();
+    }
+    return;
+  }
+
   for (const [command, args] of plan.steps) {
     if (closed) return;
     const code = await runStep(command, args, env, res, shouldAbort);
@@ -129,6 +209,218 @@ async function handleRun(req, res) {
 
   writeEvent(res, "done", { ok: true });
   res.end();
+}
+
+async function runAutoGame(body, env, res, shouldAbort, isClosed) {
+  const gameConfig = buildGameConfig(body);
+  const players = gameConfig.players;
+  const roles = new Map(players.map((player) => [player.id, player.role]));
+  const history = [];
+  const eliminated = [];
+  let alive = players.map((player) => player.id);
+  let winner = "";
+  let reason = "";
+  const maxRounds = clampInt(body.maxRounds, 8, 1, 20);
+
+  for (const [command, args] of [
+    ["./bin/labctl", ["down"]],
+    ["./bin/labctl", ["up"]],
+  ]) {
+    if (isClosed()) return false;
+    const result = await runStep(command, args, env, res, shouldAbort);
+    if (result !== 0) return false;
+  }
+
+  for (let round = 1; round <= maxRounds; round += 1) {
+    const roundEnv = { ...env, ROUND: String(round) };
+    writeEvent(res, "stdout", {
+      data: `[referee] round ${round} starts with ${alive.join(", ")}\n`,
+    });
+
+    for (const id of alive) {
+      if (isClosed()) return false;
+      const result = await runStep(
+        "./bin/labctl",
+        ["run-agent", id, "vote"],
+        { ...roundEnv, ACTIVE_PLAYER_IDS: alive.join(",") },
+        res,
+        shouldAbort,
+      );
+      if (result !== 0) return false;
+    }
+
+    const dayLog = await runStepCapture(
+      "./bin/labctl",
+      ["query", "public_log"],
+      roundEnv,
+      res,
+      shouldAbort,
+    );
+    if (dayLog.code !== 0) return false;
+
+    const dayVotes = pickRows(dayLog.stdout, "public_log").filter(
+      (row) =>
+        Number(row.round) === round &&
+        row.action === "vote" &&
+        alive.includes(row.agent_id) &&
+        alive.includes(row.target),
+    );
+    const dayTarget = chooseTarget(dayVotes);
+    if (dayTarget) {
+      alive = alive.filter((id) => id !== dayTarget.target);
+      eliminated.push({ id: dayTarget.target, round, phase: "day" });
+      history.push({
+        round,
+        phase: "day",
+        event: "vote",
+        target: dayTarget.target,
+        votes: dayTarget.votes,
+      });
+      writeEvent(res, "stdout", {
+        data: `[referee] day ${round}: ${dayTarget.target} eliminated by ${dayTarget.votes} vote(s)\n`,
+      });
+    } else {
+      history.push({ round, phase: "day", event: "no-elimination" });
+      writeEvent(res, "stdout", { data: `[referee] day ${round}: no elimination\n` });
+    }
+
+    const dayWin = winnerFor(alive, roles);
+    if (dayWin) {
+      winner = dayWin.winner;
+      reason = dayWin.reason;
+      break;
+    }
+
+    const liveWolves = alive.filter((id) => roles.get(id) === "wolf");
+    for (const id of liveWolves) {
+      if (isClosed()) return false;
+      const result = await runStep(
+        "./bin/labctl",
+        ["run-agent", id, "wolf"],
+        { ...roundEnv, ACTIVE_PLAYER_IDS: alive.join(",") },
+        res,
+        shouldAbort,
+      );
+      if (result !== 0) return false;
+    }
+
+    const wolfLog = await runStepCapture(
+      "./bin/labctl",
+      ["query", "wolf_channel"],
+      roundEnv,
+      res,
+      shouldAbort,
+    );
+    if (wolfLog.code !== 0) return false;
+
+    const wolfVotes = pickRows(wolfLog.stdout, "wolf_channel").filter(
+      (row) =>
+        Number(row.round) === round &&
+        row.action === "wolf-kill" &&
+        alive.includes(row.agent_id) &&
+        alive.includes(row.target),
+    );
+    const wolfTarget = chooseTarget(wolfVotes);
+    if (wolfTarget) {
+      alive = alive.filter((id) => id !== wolfTarget.target);
+      eliminated.push({ id: wolfTarget.target, round, phase: "wolf" });
+      history.push({
+        round,
+        phase: "wolf",
+        event: "kill",
+        target: wolfTarget.target,
+        votes: wolfTarget.votes,
+      });
+      writeEvent(res, "stdout", {
+        data: `[referee] night ${round}: ${wolfTarget.target} killed by wolves\n`,
+      });
+    } else {
+      history.push({ round, phase: "wolf", event: "no-kill" });
+      writeEvent(res, "stdout", { data: `[referee] night ${round}: no kill\n` });
+    }
+
+    const wolfWin = winnerFor(alive, roles);
+    if (wolfWin) {
+      winner = wolfWin.winner;
+      reason = wolfWin.reason;
+      break;
+    }
+  }
+
+  if (!winner) {
+    winner = "undecided";
+    reason = `max rounds reached (${maxRounds})`;
+  }
+
+  const result = {
+    winner,
+    reason,
+    rounds: history.reduce((value, item) => Math.max(value, item.round || 0), 0),
+    alive,
+    eliminated,
+    history,
+  };
+
+  writeEvent(res, "step", { command: "referee auto-game" });
+  writeEvent(res, "stdout", { data: `${JSON.stringify([result])}\n` });
+  writeEvent(res, "exit", { code: 0, signal: null });
+  return true;
+}
+
+async function handleExport(req, res) {
+  let body;
+  let gameConfig;
+  try {
+    body = await readJson(req);
+    body.configPath = await writeRuntimeConfig(body);
+    gameConfig = buildGameConfig(body);
+  } catch (error) {
+    sendJson(res, 400, { error: error.message });
+    return;
+  }
+
+  const env = buildLabEnv(body, process.env, { requireModel: false });
+  const queryNames = ["whoami", "public_log", "wolf_channel", "full_log"];
+  const results = {};
+  const errors = [];
+
+  for (const queryName of queryNames) {
+    const result = await runBufferedStep("./bin/labctl", ["query", queryName], env);
+    if (result.code !== 0) {
+      errors.push({
+        query: queryName,
+        exitCode: result.code,
+        output: `${result.stdout}${result.stderr}`.slice(0, 2000),
+      });
+      results[queryName] = [];
+      continue;
+    }
+    results[queryName] = pickRows(result.stdout, queryName);
+  }
+
+  const payload = {
+    exported_at: new Date().toISOString(),
+    game_id: "werewolf-quack-lab",
+    provider: env.LLM_PROVIDER,
+    model: env.LLM_PROVIDER === "stub" ? "scripted" : env.LLM_MODEL,
+    round: Number(env.ROUND),
+    post_game_audit_enabled: env.POST_GAME === "true",
+    players: gameConfig.players,
+    nodes: results.whoami,
+    public_log: results.public_log,
+    wolf_channel: results.wolf_channel,
+    audit_log: results.full_log,
+    export_errors: errors,
+  };
+
+  sendJson(res, errors.length > 0 ? 207 : 200, payload);
+}
+
+async function writeRuntimeConfig(input) {
+  const gameConfig = buildGameConfig(input);
+  await mkdir(GENERATED_DIR, { recursive: true });
+  await writeFile(WEB_CONFIG_PATH, `${JSON.stringify(gameConfig, null, 2)}\n`);
+  return path.relative(ROOT_DIR, WEB_CONFIG_PATH);
 }
 
 async function handleModels(req, res) {
@@ -164,6 +456,50 @@ async function handleModels(req, res) {
   } catch (error) {
     sendJson(res, 502, { error: error.message, url });
   }
+}
+
+function pickRows(raw, queryName) {
+  const arrays = extractJsonArrays(raw).filter((value) => Array.isArray(value));
+  const predicates = {
+    whoami: (row) => row.name,
+    public_log: (row) => row.public_text,
+    wolf_channel: (row) => row.action === "wolf-kill" || row.rationale,
+    full_log: (row) => row.public_text || row.rationale,
+  };
+  const predicate = predicates[queryName] || (() => true);
+  return arrays.find((rows) => rows.some((row) => row && typeof row === "object" && predicate(row))) || [];
+}
+
+function chooseTarget(rows) {
+  const counts = new Map();
+  for (const row of rows) {
+    if (!row.target) continue;
+    counts.set(row.target, (counts.get(row.target) || 0) + 1);
+  }
+  const ranked = [...counts.entries()].sort((left, right) => {
+    if (right[1] !== left[1]) return right[1] - left[1];
+    return left[0].localeCompare(right[0]);
+  });
+  if (ranked.length === 0) return null;
+  return { target: ranked[0][0], votes: ranked[0][1] };
+}
+
+function winnerFor(alive, roles) {
+  const wolves = alive.filter((id) => roles.get(id) === "wolf").length;
+  const town = alive.length - wolves;
+  if (wolves === 0) {
+    return { winner: "village", reason: "all wolves were eliminated" };
+  }
+  if (wolves >= town) {
+    return { winner: "wolves", reason: "wolves reached parity with town" };
+  }
+  return null;
+}
+
+function clampInt(value, fallback, min, max) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(parsed)));
 }
 
 async function serveStatic(req, res) {
@@ -207,6 +543,10 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "POST" && req.url === "/api/models") {
       await handleModels(req, res);
+      return;
+    }
+    if (req.method === "POST" && req.url === "/api/export") {
+      await handleExport(req, res);
       return;
     }
     if (req.method === "GET") {

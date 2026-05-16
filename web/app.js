@@ -6,15 +6,32 @@ const timeline = document.querySelector("#timeline");
 const statusEl = document.querySelector("#status");
 const activeCommand = document.querySelector("#activeCommand");
 const providerInputs = [...document.querySelectorAll("input[name='provider']")];
+const playerCount = document.querySelector("#playerCount");
+const playerRoster = document.querySelector("#playerRoster");
 const model = document.querySelector("#model");
 const baseUrl = document.querySelector("#baseUrl");
 const apiKey = document.querySelector("#apiKey");
+const postGame = document.querySelector("#postGame");
 const buttons = [...document.querySelectorAll("[data-action]")];
 const discoverButton = document.querySelector("[data-discover]");
+const downloadButton = document.querySelector("[data-download]");
 const clearButton = document.querySelector("[data-clear]");
 
 let running = false;
 let currentStep = null;
+
+const roles = ["wolf", "villager", "seer", "doctor"];
+const providerModelDefaults = {
+  openai: "gpt-4o-mini",
+};
+const knownProviderModels = new Set(Object.values(providerModelDefaults));
+let players = [
+  { id: "agent-a", role: "wolf" },
+  { id: "agent-b", role: "villager" },
+  { id: "agent-c", role: "seer" },
+  { id: "agent-d", role: "wolf" },
+  { id: "agent-e", role: "doctor" },
+];
 
 function setStatus(text, state = "idle") {
   statusEl.textContent = text;
@@ -25,6 +42,11 @@ function setRunning(next) {
   running = next;
   buttons.forEach((button) => {
     button.disabled = next;
+  });
+  downloadButton.disabled = next;
+  playerCount.disabled = next;
+  playerRoster.querySelectorAll("select").forEach((select) => {
+    select.disabled = next;
   });
   updateProviderState();
 }
@@ -48,11 +70,65 @@ function settings() {
     model: model.value,
     baseUrl: baseUrl.value,
     apiKey: apiKey.value,
+    postGame: postGame.checked ? "true" : "false",
+    players,
   };
 }
 
 function selectedProvider() {
   return form.elements.provider.value || "stub";
+}
+
+function renderPlayers() {
+  const count = clampPlayerCount(Number(playerCount.value || players.length));
+  players = Array.from({ length: count }, (_, index) => ({
+    id: agentId(index),
+    role: players[index]?.role || defaultRole(index),
+  }));
+  playerCount.value = String(count);
+  playerRoster.replaceChildren(...players.map(playerRow));
+}
+
+function playerRow(player, index) {
+  const row = document.createElement("label");
+  row.className = "player-row";
+  const name = document.createElement("span");
+  name.textContent = player.id;
+
+  const select = document.createElement("select");
+  select.name = `role-${player.id}`;
+  select.setAttribute("aria-label", `${player.id} role`);
+  roles.forEach((role) => {
+    const option = document.createElement("option");
+    option.value = role;
+    option.textContent = role;
+    option.selected = role === player.role;
+    select.append(option);
+  });
+  select.addEventListener("change", () => {
+    players[index] = { ...players[index], role: select.value };
+  });
+
+  row.append(name, select);
+  return row;
+}
+
+function clampPlayerCount(value) {
+  if (!Number.isFinite(value)) return 5;
+  return Math.min(12, Math.max(3, Math.trunc(value)));
+}
+
+function defaultRole(index) {
+  if (index === 0 || index === 3) return "wolf";
+  if (index === 2) return "seer";
+  if (index === 4) return "doctor";
+  return "villager";
+}
+
+function agentId(index) {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz";
+  if (index < alphabet.length) return `agent-${alphabet[index]}`;
+  return `agent-${index + 1}`;
 }
 
 function applyProviderDefaults() {
@@ -68,8 +144,16 @@ function applyProviderDefaults() {
     baseUrl.value = "http://host.docker.internal:8000/v1";
   } else if (value === "openai") {
     baseUrl.value = "https://api.openai.com/v1";
+    if (shouldApplyModelDefault()) {
+      model.value = providerModelDefaults.openai;
+    }
   }
   updateProviderState();
+}
+
+function shouldApplyModelDefault() {
+  const current = model.value.trim();
+  return !current || knownProviderModels.has(current) || current.startsWith("MLX-");
 }
 
 function updateProviderState() {
@@ -174,6 +258,13 @@ function renderSummary(summary) {
     fragment.append(metrics);
   }
 
+  if (summary.note && summary.rows.length > 0) {
+    const note = document.createElement("p");
+    note.className = "note";
+    note.textContent = summary.note;
+    fragment.append(note);
+  }
+
   if (summary.rows.length > 0) {
     fragment.append(renderRows(summary));
   } else if (summary.assertions.length > 0) {
@@ -214,6 +305,24 @@ function renderRows(summary) {
       row.agent,
       row.target,
       row.rationale,
+    ]);
+  }
+
+  if (summary.kind === "fullLog") {
+    return table(
+      ["Agent", "Action", "Target", "Public text", "Private rationale"],
+      summary.rows,
+      (row) => [row.agent, row.action, row.target, row.text, row.rationale],
+    );
+  }
+
+  if (summary.kind === "autoGame") {
+    return table(["Round", "Phase", "Event", "Target", "Votes"], summary.rows, (row) => [
+      row.round,
+      row.phase,
+      row.event,
+      row.target,
+      row.votes,
     ]);
   }
 
@@ -274,7 +383,9 @@ function labelForAction(action) {
     publicLog: "Public Log",
     wolf: "Wolf",
     wolfChannel: "Wolf Channel",
+    fullLog: "Audit Log",
     denied: "Denied Scope",
+    playGame: "Play Game",
     fullRound: "Full Round",
     whoami: "Whoami",
     smoke: "Smoke",
@@ -400,10 +511,58 @@ async function discoverModels() {
   }
 }
 
+async function downloadGame() {
+  if (running) return;
+  setRunning(true);
+  setStatus("Exporting", "running");
+  appendRawLine("\n> download game", "line-system");
+
+  try {
+    const response = await fetch("/api/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings()),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `werewolf-quack-lab-${timestamp}.json`;
+    const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+
+    appendRawLine(`downloaded ${filename}`, "line-command");
+    if (payload.export_errors?.length) {
+      appendRawLine(`export completed with ${payload.export_errors.length} query warning(s)`);
+    }
+    setStatus("Done");
+    activeCommand.textContent = "Game downloaded";
+  } catch (error) {
+    appendRawLine(error.message, "line-error");
+    setStatus("Error", "error");
+    activeCommand.textContent = "Download failed";
+  } finally {
+    setRunning(false);
+  }
+}
+
 providerInputs.forEach((input) => {
   input.addEventListener("change", applyProviderDefaults);
 });
+playerCount.addEventListener("change", renderPlayers);
 discoverButton.addEventListener("click", discoverModels);
+downloadButton.addEventListener("click", downloadGame);
 clearButton.addEventListener("click", () => {
   log.textContent = "";
   timeline.replaceChildren();
@@ -414,4 +573,5 @@ buttons.forEach((button) => {
 });
 
 appendRawLine("Ready.");
+renderPlayers();
 applyProviderDefaults();

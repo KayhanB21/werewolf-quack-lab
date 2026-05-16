@@ -1,4 +1,16 @@
 const LABCTL = "./bin/labctl";
+const ROLES = new Set(["wolf", "villager", "seer", "doctor"]);
+const DEFAULT_MODELS = {
+  stub: "stub-werewolf-v1",
+  openai: "gpt-4o-mini",
+};
+const DEFAULT_PLAYERS = [
+  { id: "agent-a", role: "wolf" },
+  { id: "agent-b", role: "villager" },
+  { id: "agent-c", role: "seer" },
+  { id: "agent-d", role: "wolf" },
+  { id: "agent-e", role: "doctor" },
+];
 
 export const ACTIONS = {
   start: {
@@ -28,6 +40,11 @@ export const ACTIONS = {
     requiresModel: false,
     steps: [[LABCTL, ["query", "wolf_channel"]]],
   },
+  fullLog: {
+    label: "Audit Log",
+    requiresModel: false,
+    steps: [[LABCTL, ["query", "full_log"]]],
+  },
   whoami: {
     label: "Whoami",
     requiresModel: false,
@@ -42,9 +59,14 @@ export const ACTIONS = {
     label: "Smoke Test",
     steps: [[LABCTL, ["smoke"]]],
   },
+  playGame: {
+    label: "Play Game",
+    special: "autoGame",
+  },
   fullRound: {
     label: "Full Round",
     steps: [
+      [LABCTL, ["down"]],
       [LABCTL, ["up"]],
       [LABCTL, ["run-day"]],
       [LABCTL, ["query", "public_log"]],
@@ -89,16 +111,23 @@ export function buildLabEnv(input = {}, baseEnv = process.env, options = {}) {
     NO_COLOR: "1",
     ROUND: round,
     LLM_PROVIDER: provider,
+    POST_GAME: truthy(input.postGame) ? "true" : "false",
   };
 
+  if (input.configPath) {
+    env.CONFIG_PATH = String(input.configPath);
+  }
+
   if (provider === "stub") {
-    env.LLM_MODEL = "stub-werewolf-v1";
+    env.LLM_MODEL = defaultModelForProvider(provider);
     env.LLM_BASE_URL = "https://api.openai.com/v1";
     env.LLM_API_KEY = "";
     return env;
   }
 
-  const model = String(input.model || baseEnv.OMLX_MODEL || baseEnv.LLM_MODEL || "").trim();
+  const model = String(
+    input.model || baseEnv.OMLX_MODEL || baseEnv.LLM_MODEL || defaultModelForProvider(provider),
+  ).trim();
   if ((options.requireModel ?? true) && !model) {
     throw new Error("model is required for non-stub providers");
   }
@@ -123,10 +152,83 @@ export function buildLabEnv(input = {}, baseEnv = process.env, options = {}) {
   return env;
 }
 
+export function buildGameConfig(input = {}) {
+  const provider = String(input.provider || "stub").trim();
+  if (!PROVIDERS.has(provider)) {
+    throw new Error(`unsupported provider: ${provider}`);
+  }
+
+  const players = normalizePlayers(input.players);
+  const model = String(input.model || defaultModelForProvider(provider)).trim();
+  const baseUrl = String(
+    input.baseUrl || (provider === "omlx"
+      ? "http://host.docker.internal:8000/v1"
+      : "https://api.openai.com/v1"),
+  ).trim();
+
+  return {
+    game_id: "werewolf-quack-lab",
+    players,
+    model: {
+      provider,
+      model,
+      base_url: baseUrl,
+    },
+  };
+}
+
 export function toHostModelUrl(baseUrl) {
   const normalized = String(baseUrl || "http://localhost:8000/v1")
     .trim()
     .replace("host.docker.internal", "localhost")
     .replace(/\/+$/, "");
   return `${normalized}/models`;
+}
+
+function truthy(value) {
+  return value === true || value === "true" || value === "on" || value === "1";
+}
+
+function defaultModelForProvider(provider) {
+  return DEFAULT_MODELS[provider] || "";
+}
+
+function normalizePlayers(value) {
+  const players = Array.isArray(value) && value.length > 0 ? value : DEFAULT_PLAYERS;
+  if (players.length < 3 || players.length > 12) {
+    throw new Error("player count must be between 3 and 12");
+  }
+
+  const normalized = players.map((player, index) => {
+    const id = String(player.id || agentId(index)).trim();
+    const role = String(player.role || "villager").trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id)) {
+      throw new Error(`invalid player id: ${id}`);
+    }
+    if (!ROLES.has(role)) {
+      throw new Error(`invalid role: ${role}`);
+    }
+    return { id, role };
+  });
+
+  const ids = new Set(normalized.map((player) => player.id));
+  if (ids.size !== normalized.length) {
+    throw new Error("player ids must be unique");
+  }
+
+  const wolfCount = normalized.filter((player) => player.role === "wolf").length;
+  if (wolfCount < 1) {
+    throw new Error("at least one wolf is required");
+  }
+  if (wolfCount >= normalized.length) {
+    throw new Error("at least one non-wolf player is required");
+  }
+
+  return normalized;
+}
+
+function agentId(index) {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz";
+  if (index < alphabet.length) return `agent-${alphabet[index]}`;
+  return `agent-${index + 1}`;
 }
