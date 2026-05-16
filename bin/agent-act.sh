@@ -9,6 +9,7 @@ LLM_PROVIDER="${LLM_PROVIDER:-stub}"
 LLM_MODEL="${LLM_MODEL:-stub-werewolf-v1}"
 LLM_BASE_URL="${LLM_BASE_URL:-https://api.openai.com/v1}"
 LLM_API_KEY="${LLM_API_KEY:-}"
+LLM_TIMEOUT_SECONDS="${LLM_TIMEOUT_SECONDS:-60}"
 ACTION_PIPE="${ACTION_PIPE:-/tmp/${NODE_ID}-duckdb.fifo}"
 PHASE="day"
 ROUND="1"
@@ -101,7 +102,7 @@ stub_turn_json() {
 }
 
 openai_turn_json() {
-  if [[ -z "${LLM_API_KEY}" ]]; then
+  if [[ "${LLM_PROVIDER}" == "openai" && -z "${LLM_API_KEY}" ]]; then
     echo "LLM_API_KEY is required when LLM_PROVIDER=${LLM_PROVIDER}" >&2
     exit 1
   fi
@@ -133,10 +134,17 @@ openai_turn_json() {
       }'
   )"
 
-  curl -fsS "${LLM_BASE_URL%/}/chat/completions" \
-    -H "Authorization: Bearer ${LLM_API_KEY}" \
-    -H "Content-Type: application/json" \
-    -d "${payload}" \
+  curl_args=(
+    --max-time "${LLM_TIMEOUT_SECONDS}"
+    -fsS "${LLM_BASE_URL%/}/chat/completions"
+    -H "Content-Type: application/json"
+    -d "${payload}"
+  )
+  if [[ -n "${LLM_API_KEY}" ]]; then
+    curl_args+=(-H "Authorization: Bearer ${LLM_API_KEY}")
+  fi
+
+  curl "${curl_args[@]}" \
     | jq -r '.choices[0].message.content' \
     | jq -c '
         {
@@ -161,7 +169,7 @@ case "${LLM_PROVIDER}" in
   stub)
     turn_json="$(stub_turn_json)"
     ;;
-  openai|openai-compatible)
+  openai|openai-compatible|omlx)
     turn_json="$(openai_turn_json)"
     ;;
   *)

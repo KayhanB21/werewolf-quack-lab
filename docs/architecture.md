@@ -67,6 +67,18 @@ LLM_MODEL=gpt-4o-mini
 LLM_API_KEY=...
 ```
 
+For a local Apple Silicon model served by oMLX, use:
+
+```bash
+LLM_PROVIDER=omlx
+LLM_BASE_URL=http://host.docker.internal:8000/v1
+LLM_MODEL=<model-id-from-http://localhost:8000/v1/models>
+LLM_API_KEY=<only-if-oMLX-api-key-auth-is-enabled>
+```
+
+The optional `./bin/omlx-smoke-test.sh` checks the host oMLX server, discovers a
+model, generates a three-player config, and then runs the same gateway smoke.
+
 ## Player Node Boundary
 
 Each player owns raw private tables. The gateway cannot query those tables

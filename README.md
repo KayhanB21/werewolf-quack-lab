@@ -14,8 +14,8 @@ DuckDB client.
 - Per-player private tables: `self`, `knowledge`, `suspicions`, `intents`, `votes`.
 - A container-local agent action entry point, `agent-act.sh`, that writes actions
   into that player's own running DuckDB process.
-- Stub and OpenAI-compatible agent modes. The default smoke test uses `stub` so
-  it is deterministic and does not need network access.
+- Stub, OpenAI-compatible, and local oMLX agent modes. The default smoke test
+  uses `stub` so it is deterministic and does not need network access.
 - Public views that expose only safe columns during play.
 - A wolf-channel view that row-filters locally based on the player's own role.
 - Server-side Quack authentication and authorization callbacks.
@@ -76,6 +76,37 @@ Clean up:
 
 To add players, edit `config/game.sample.json`. The generated Compose file is not
 source controlled.
+
+## Local Model Smoke With oMLX
+
+[oMLX](https://github.com/jundot/omlx) exposes an OpenAI-compatible API at
+`http://localhost:8000/v1`, including `/v1/chat/completions` and `/v1/models`.
+Because the player agents run inside Docker, they reach the host server through
+`host.docker.internal`.
+
+Start oMLX on the host:
+
+```bash
+brew services start omlx
+```
+
+or run the CLI server directly:
+
+```bash
+omlx serve --model-dir ~/models
+```
+
+Then run the optional integration smoke:
+
+```bash
+./bin/omlx-smoke-test.sh
+```
+
+If oMLX API key authentication is enabled, set `OMLX_API_KEY` or `LLM_API_KEY`
+before running the script. The script checks `/v1/models`, chooses the first
+model unless `OMLX_MODEL` is set, generates a three-player config, asks each
+container-local agent to act through oMLX, and then runs the same Quack gateway
+assertions as the deterministic smoke.
 
 ## How It Maps To The Browser Demo
 

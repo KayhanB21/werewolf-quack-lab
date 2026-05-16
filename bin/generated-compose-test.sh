@@ -19,8 +19,9 @@ cat > "${CONFIG_PATH}" <<'JSON'
     { "id": "agent-f", "role": "villager" }
   ],
   "model": {
-    "provider": "stub",
-    "model": "stub-werewolf-v1"
+    "provider": "omlx",
+    "model": "local-test-model",
+    "base_url": "http://host.docker.internal:8000/v1"
   }
 }
 JSON
@@ -55,4 +56,19 @@ if grep -Eq "PUBLIC_TEXT|RATIONALE_TEXT|WOLF_TARGET" <<<"${compose_yaml}"; then
   exit 1
 fi
 
-echo "ok - generated compose supports arbitrary configured players"
+if ! grep -Fq 'LLM_PROVIDER: ${LLM_PROVIDER:-omlx}' <<<"${compose_yaml}"; then
+  echo "generated compose should preserve the configured LLM provider" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'LLM_MODEL: ${LLM_MODEL:-local-test-model}' <<<"${compose_yaml}"; then
+  echo "generated compose should preserve the configured LLM model" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8000/v1}' <<<"${compose_yaml}"; then
+  echo "generated compose should preserve the configured LLM base URL" >&2
+  exit 1
+fi
+
+echo "ok - generated compose supports arbitrary configured players and local model defaults"
