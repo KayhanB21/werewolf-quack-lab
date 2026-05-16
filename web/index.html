@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Werewolf Quack Lab</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Werewolf Quack Lab</p>
+          <h1>Round Runner</h1>
+        </div>
+        <div id="status" class="status" data-state="idle">Idle</div>
+      </header>
+
+      <section class="workspace">
+        <aside class="controls" aria-label="Lab controls">
+          <form id="settings" class="settings">
+            <label>
+              Provider
+              <select id="provider" name="provider">
+                <option value="stub">Stub</option>
+                <option value="omlx">oMLX</option>
+                <option value="openai-compatible">OpenAI-compatible</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </label>
+
+            <label>
+              Round
+              <input id="round" name="round" type="number" min="1" value="1" />
+            </label>
+
+            <label>
+              Model
+              <input
+                id="model"
+                name="model"
+                autocomplete="off"
+                placeholder="required outside stub mode"
+              />
+            </label>
+
+            <label>
+              Base URL
+              <input
+                id="baseUrl"
+                name="baseUrl"
+                autocomplete="off"
+                value="http://host.docker.internal:8000/v1"
+              />
+            </label>
+
+            <label>
+              API key
+              <input id="apiKey" name="apiKey" type="password" autocomplete="off" />
+            </label>
+
+            <button class="secondary" type="button" data-discover>Discover Models</button>
+          </form>
+
+          <div class="button-grid" aria-label="Round actions">
+            <button type="button" data-action="start">Start</button>
+            <button type="button" data-action="day">Day</button>
+            <button type="button" data-action="publicLog">Public Log</button>
+            <button type="button" data-action="wolf">Wolf</button>
+            <button type="button" data-action="wolfChannel">Wolf Channel</button>
+            <button type="button" data-action="denied">Denied Scope</button>
+            <button class="primary" type="button" data-action="fullRound">Full Round</button>
+            <button type="button" data-action="whoami">Whoami</button>
+            <button type="button" data-action="smoke">Smoke</button>
+            <button class="danger" type="button" data-action="stop">Stop</button>
+          </div>
+        </aside>
+
+        <section class="output" aria-label="Command output">
+          <div class="output-bar">
+            <span id="activeCommand">No command running</span>
+            <button class="secondary" type="button" data-clear>Clear</button>
+          </div>
+          <pre id="log" tabindex="0"></pre>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
