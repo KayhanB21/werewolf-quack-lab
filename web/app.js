@@ -5,7 +5,7 @@ const log = document.querySelector("#log");
 const timeline = document.querySelector("#timeline");
 const statusEl = document.querySelector("#status");
 const activeCommand = document.querySelector("#activeCommand");
-const provider = document.querySelector("#provider");
+const providerInputs = [...document.querySelectorAll("input[name='provider']")];
 const model = document.querySelector("#model");
 const baseUrl = document.querySelector("#baseUrl");
 const apiKey = document.querySelector("#apiKey");
@@ -26,7 +26,7 @@ function setRunning(next) {
   buttons.forEach((button) => {
     button.disabled = next;
   });
-  discoverButton.disabled = next;
+  updateProviderState();
 }
 
 function appendRaw(text, className = "") {
@@ -42,26 +42,52 @@ function appendRawLine(text, className = "") {
 }
 
 function settings() {
-  const data = Object.fromEntries(new FormData(form).entries());
   return {
-    provider: data.provider,
-    round: data.round,
-    model: data.model,
-    baseUrl: data.baseUrl,
-    apiKey: data.apiKey,
+    provider: selectedProvider(),
+    round: form.elements.round.value,
+    model: model.value,
+    baseUrl: baseUrl.value,
+    apiKey: apiKey.value,
   };
 }
 
+function selectedProvider() {
+  return form.elements.provider.value || "stub";
+}
+
 function applyProviderDefaults() {
-  if (provider.value === "stub") {
+  const value = selectedProvider();
+  if (value === "stub") {
     model.value = "";
     baseUrl.value = "https://api.openai.com/v1";
+    updateProviderState();
     return;
   }
 
-  if (provider.value === "omlx") {
+  if (value === "omlx") {
     baseUrl.value = "http://host.docker.internal:8000/v1";
+  } else if (value === "openai") {
+    baseUrl.value = "https://api.openai.com/v1";
   }
+  updateProviderState();
+}
+
+function updateProviderState() {
+  const value = selectedProvider();
+  const isScripted = value === "stub";
+  const modelPlaceholders = {
+    stub: "not used",
+    omlx: "local model id",
+    "openai-compatible": "remote model id",
+    openai: "gpt-4o-mini",
+  };
+  model.disabled = isScripted || running;
+  baseUrl.disabled = isScripted || running;
+  apiKey.disabled = isScripted || running;
+  discoverButton.disabled = isScripted || running;
+  model.required = !isScripted;
+  baseUrl.required = !isScripted;
+  model.placeholder = modelPlaceholders[value] || "model id";
 }
 
 function startRunCard(action) {
@@ -260,6 +286,7 @@ function labelForAction(action) {
 async function runAction(action) {
   if (running) return;
 
+  const payload = { action, ...settings() };
   setRunning(true);
   setStatus("Running", "running");
   activeCommand.textContent = labelForAction(action);
@@ -271,7 +298,7 @@ async function runAction(action) {
     response = await fetch("/api/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, ...settings() }),
+      body: JSON.stringify(payload),
     });
   } catch (error) {
     appendRawLine(error.message, "line-error");
@@ -373,7 +400,9 @@ async function discoverModels() {
   }
 }
 
-provider.addEventListener("change", applyProviderDefaults);
+providerInputs.forEach((input) => {
+  input.addEventListener("change", applyProviderDefaults);
+});
 discoverButton.addEventListener("click", discoverModels);
 clearButton.addEventListener("click", () => {
   log.textContent = "";
@@ -385,3 +414,4 @@ buttons.forEach((button) => {
 });
 
 appendRawLine("Ready.");
+applyProviderDefaults();

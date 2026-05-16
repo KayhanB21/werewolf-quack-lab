@@ -85,17 +85,17 @@ async function runStep(command, args, env, res, shouldAbort) {
 
 async function handleRun(req, res) {
   let body;
+  let plan;
   try {
     body = await readJson(req);
-    getActionPlan(body.action);
-    buildLabEnv(body);
+    plan = getActionPlan(body.action);
+    buildLabEnv(body, process.env, { requireModel: plan.requiresModel !== false });
   } catch (error) {
     sendJson(res, 400, { error: error.message });
     return;
   }
 
-  const plan = getActionPlan(body.action);
-  const env = buildLabEnv(body);
+  const env = buildLabEnv(body, process.env, { requireModel: plan.requiresModel !== false });
   let closed = false;
   const shouldAbort = { onAbort: null };
 

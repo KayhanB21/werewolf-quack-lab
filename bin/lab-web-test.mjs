@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   buildLabEnv,
   getActionPlan,
@@ -7,6 +8,11 @@ import {
   toHostModelUrl,
 } from "./lab-web-actions.mjs";
 import { extractJsonArrays, summarizeStep } from "../web/flow.mjs";
+
+const html = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
+assert.match(html, /value="stub" checked/);
+assert.match(html, />Scripted</);
+assert.doesNotMatch(html, /<select[^>]+id="provider"/);
 
 assert.equal(getActionPlan("fullRound").steps.length, 6);
 assert.deepEqual(getActionPlan("day").steps[0], ["./bin/labctl", ["run-day"]]);
@@ -19,6 +25,9 @@ assert.equal(stubEnv.LLM_MODEL, "stub-werewolf-v1");
 assert.equal(stubEnv.ROUND, "2");
 
 assert.throws(() => buildLabEnv({ provider: "omlx" }, {}), /model is required/);
+assert.equal(buildLabEnv({ provider: "omlx" }, {}, { requireModel: false }).LLM_MODEL, "");
+assert.equal(getActionPlan("stop").requiresModel, false);
+assert.equal(getActionPlan("publicLog").requiresModel, false);
 
 const omlxEnv = buildLabEnv(
   {
@@ -33,6 +42,10 @@ assert.equal(omlxEnv.LLM_PROVIDER, "omlx");
 assert.equal(omlxEnv.LLM_MODEL, "local-model");
 assert.equal(omlxEnv.LLM_BASE_URL, "http://host.docker.internal:8000/v1");
 assert.equal(omlxEnv.LLM_API_KEY, "secret");
+assert.equal(omlxEnv.LLM_TIMEOUT_SECONDS, "180");
+
+const openaiEnv = buildLabEnv({ provider: "openai", model: "gpt-test" }, {});
+assert.equal(openaiEnv.LLM_TIMEOUT_SECONDS, "60");
 
 assert.equal(
   toHostModelUrl("http://host.docker.internal:8000/v1/"),

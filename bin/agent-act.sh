@@ -140,6 +140,96 @@ stub_turn_json() {
   esac
 }
 
+target_from_text() {
+  local content="$1"
+  local id
+
+  IFS="," read -r -a ids <<< "${PLAYER_IDS}"
+  for id in "${ids[@]}"; do
+    id="${id// /}"
+    [[ -z "${id}" || "${id}" == "${NODE_ID}" ]] && continue
+    if [[ "${ROLE}" == "wolf" ]] && contains_csv "${id}" "${PARTNERS}"; then
+      continue
+    fi
+    if [[ "${content}" == *"${id}"* ]]; then
+      printf "%s" "${id}"
+      return 0
+    fi
+  done
+
+  pick_target
+}
+
+text_turn_json() {
+  local content="$1"
+  local lower action target public_text rationale
+  lower="$(tr '[:upper:]' '[:lower:]' <<<"${content}")"
+
+  case "${PHASE}" in
+    wolf)
+      if [[ "${ROLE}" != "wolf" ]]; then
+        jq -n --arg action "noop" '{action: $action, target: "", public_text: "", rationale: "not a wolf"}'
+        return 0
+      fi
+      action="wolf-kill"
+      target="$(target_from_text "${content}")"
+      public_text=""
+      ;;
+    day)
+      if [[ "${lower}" == *"vote"* ]]; then
+        action="vote"
+      elif [[ "${lower}" == *"accuse"* || "${lower}" == *"suspect"* ]]; then
+        action="accuse"
+      elif [[ "${lower}" == *"investigate"* || "${lower}" == *"check"* ]]; then
+        action="investigate"
+      else
+        action="speak"
+      fi
+
+      target=""
+      if [[ "${action}" != "speak" ]]; then
+        target="$(target_from_text "${content}")"
+      fi
+      public_text="$(fallback_public_text "${action}" "${target}")"
+      ;;
+    vote)
+      action="vote"
+      target="$(target_from_text "${content}")"
+      public_text="$(fallback_public_text "${action}" "${target}")"
+      ;;
+    *)
+      echo "unsupported phase: ${PHASE}" >&2
+      exit 2
+      ;;
+  esac
+
+  rationale="Model returned prose instead of JSON; normalized a safe ${action} turn."
+  jq -n \
+    --arg action "${action}" \
+    --arg target "${target}" \
+    --arg public_text "${public_text}" \
+    --arg rationale "${rationale}" \
+    '{action: $action, target: $target, public_text: $public_text, rationale: $rationale}'
+}
+
+model_content_turn_json() {
+  local content="$1"
+
+  if jq -e 'type == "object"' >/dev/null 2>&1 <<<"${content}"; then
+    jq -c '
+      {
+        action: (.action // "speak"),
+        target: (.target // ""),
+        public_text: (.public_text // ""),
+        rationale: (.rationale // "No rationale returned.")
+      }
+    ' <<<"${content}"
+    return 0
+  fi
+
+  text_turn_json "${content}"
+}
+
 openai_turn_json() {
   if [[ "${LLM_PROVIDER}" == "openai" && -z "${LLM_API_KEY}" ]]; then
     echo "LLM_API_KEY is required when LLM_PROVIDER=${LLM_PROVIDER}" >&2
@@ -159,6 +249,7 @@ openai_turn_json() {
       '{
         model: $model,
         temperature: 0.2,
+        max_tokens: 180,
         response_format: {type: "json_object"},
         messages: [
           {
@@ -183,16 +274,10 @@ openai_turn_json() {
     curl_args+=(-H "Authorization: Bearer ${LLM_API_KEY}")
   fi
 
-  curl "${curl_args[@]}" \
-    | jq -r '.choices[0].message.content' \
-    | jq -c '
-        {
-          action: (.action // "speak"),
-          target: (.target // ""),
-          public_text: (.public_text // ""),
-          rationale: (.rationale // "No rationale returned.")
-        }
-      '
+  local response content
+  response="$(curl "${curl_args[@]}")"
+  content="$(jq -r '.choices[0].message.content // empty' <<<"${response}")"
+  model_content_turn_json "${content}"
 }
 
 normalize_turn_json() {

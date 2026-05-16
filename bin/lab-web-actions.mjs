@@ -7,6 +7,7 @@ export const ACTIONS = {
   },
   stop: {
     label: "Stop Lab",
+    requiresModel: false,
     steps: [[LABCTL, ["down"]]],
   },
   day: {
@@ -19,18 +20,22 @@ export const ACTIONS = {
   },
   publicLog: {
     label: "Public Log",
+    requiresModel: false,
     steps: [[LABCTL, ["query", "public_log"]]],
   },
   wolfChannel: {
     label: "Wolf Channel",
+    requiresModel: false,
     steps: [[LABCTL, ["query", "wolf_channel"]]],
   },
   whoami: {
     label: "Whoami",
+    requiresModel: false,
     steps: [[LABCTL, ["query", "whoami"]]],
   },
   denied: {
     label: "Denied Scope",
+    requiresModel: false,
     steps: [[LABCTL, ["query", "denied_private_table"]]],
   },
   smoke: {
@@ -67,7 +72,7 @@ export function listActions() {
   }));
 }
 
-export function buildLabEnv(input = {}, baseEnv = process.env) {
+export function buildLabEnv(input = {}, baseEnv = process.env, options = {}) {
   const provider = String(input.provider || "stub").trim();
   if (!PROVIDERS.has(provider)) {
     throw new Error(`unsupported provider: ${provider}`);
@@ -94,7 +99,7 @@ export function buildLabEnv(input = {}, baseEnv = process.env) {
   }
 
   const model = String(input.model || baseEnv.OMLX_MODEL || baseEnv.LLM_MODEL || "").trim();
-  if (!model) {
+  if ((options.requireModel ?? true) && !model) {
     throw new Error("model is required for non-stub providers");
   }
 
@@ -109,7 +114,11 @@ export function buildLabEnv(input = {}, baseEnv = process.env) {
   env.LLM_MODEL = model;
   env.LLM_BASE_URL = baseUrl;
   env.LLM_API_KEY = String(input.apiKey || baseEnv.OMLX_API_KEY || baseEnv.LLM_API_KEY || "");
-  env.LLM_TIMEOUT_SECONDS = String(input.timeoutSeconds || baseEnv.LLM_TIMEOUT_SECONDS || "60");
+  env.LLM_TIMEOUT_SECONDS = String(
+    input.timeoutSeconds ||
+      baseEnv.LLM_TIMEOUT_SECONDS ||
+      (provider === "omlx" ? "180" : "60"),
+  );
 
   return env;
 }
