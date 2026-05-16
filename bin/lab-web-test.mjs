@@ -11,6 +11,8 @@ import {
 import { extractJsonArrays, summarizeStep } from "../web/flow.mjs";
 
 const html = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
+const makefile = readFileSync(new URL("../Makefile", import.meta.url), "utf8");
+const devRunner = readFileSync(new URL("./lab-web-dev.mjs", import.meta.url), "utf8");
 assert.match(html, /value="stub" checked/);
 assert.match(html, />Scripted</);
 assert.match(html, /data-download/);
@@ -19,6 +21,9 @@ assert.match(html, /id="playerCount"/);
 assert.match(html, />Manual steps</);
 assert.match(html, /data-action="playGame"/);
 assert.doesNotMatch(html, /<select[^>]+id="provider"/);
+assert.match(makefile, /^web-dev:/m);
+assert.match(devRunner, /LAB_WEB_DEV/);
+assert.match(devRunner, /lab-web-server\.mjs/);
 
 assert.equal(getActionPlan("fullRound").steps.length, 7);
 assert.deepEqual(getActionPlan("fullRound").steps[0], ["./bin/labctl", ["down"]]);

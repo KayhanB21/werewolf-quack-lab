@@ -1,4 +1,4 @@
-.PHONY: up down logs test web web-test whoami public wolf full denied shell
+.PHONY: up down logs test web web-dev web-test whoami public wolf full denied shell
 
 up:
 	./bin/labctl up
@@ -14,6 +14,9 @@ test:
 
 web:
 	node ./bin/lab-web-server.mjs
+
+web-dev:
+	node ./bin/lab-web-dev.mjs
 
 web-test:
 	node ./bin/lab-web-test.mjs

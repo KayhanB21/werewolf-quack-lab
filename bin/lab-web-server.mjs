@@ -19,6 +19,8 @@ const WEB_DIR = path.join(ROOT_DIR, "web");
 const GENERATED_DIR = path.join(ROOT_DIR, ".generated");
 const WEB_CONFIG_PATH = path.join(GENERATED_DIR, "web-game.json");
 const PORT = Number(process.env.LAB_WEB_PORT || process.env.PORT || 5174);
+const DEV_MODE = truthyEnv(process.env.LAB_WEB_DEV);
+const activeChildren = new Set();
 
 const MIME = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -54,15 +56,33 @@ function stripAnsi(text) {
   return text.replace(/\u001b\[[0-9;]*m/g, "");
 }
 
+function truthyEnv(value) {
+  return ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
+}
+
+function registerChild(child) {
+  activeChildren.add(child);
+  child.on("close", () => {
+    activeChildren.delete(child);
+  });
+  return child;
+}
+
+function killActiveChildren() {
+  for (const child of activeChildren) {
+    if (!child.killed) child.kill("SIGTERM");
+  }
+}
+
 async function runStep(command, args, env, res, shouldAbort) {
   writeEvent(res, "step", { command: [command, ...args].join(" ") });
 
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    const child = registerChild(spawn(command, args, {
       cwd: ROOT_DIR,
       env,
       stdio: ["ignore", "pipe", "pipe"],
-    });
+    }));
 
     const stop = () => {
       if (!child.killed) child.kill("SIGTERM");
@@ -91,11 +111,11 @@ async function runStepCapture(command, args, env, res, shouldAbort) {
   writeEvent(res, "step", { command: [command, ...args].join(" ") });
 
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    const child = registerChild(spawn(command, args, {
       cwd: ROOT_DIR,
       env,
       stdio: ["ignore", "pipe", "pipe"],
-    });
+    }));
     let stdout = "";
     let stderr = "";
 
@@ -129,11 +149,11 @@ async function runStepCapture(command, args, env, res, shouldAbort) {
 
 async function runBufferedStep(command, args, env) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    const child = registerChild(spawn(command, args, {
       cwd: ROOT_DIR,
       env,
       stdio: ["ignore", "pipe", "pipe"],
-    });
+    }));
     let stdout = "";
     let stderr = "";
 
@@ -520,19 +540,75 @@ async function serveStatic(req, res) {
       "Content-Type": MIME.get(ext) || "application/octet-stream",
       "Cache-Control": "no-store",
     });
+    if (DEV_MODE && path.basename(filePath) === "index.html") {
+      const html = await readFile(filePath, "utf8");
+      res.end(injectDevClient(html));
+      return;
+    }
     createReadStream(filePath).pipe(res);
   } catch {
-    const index = await readFile(path.join(WEB_DIR, "index.html"));
+    const index = await readFile(path.join(WEB_DIR, "index.html"), "utf8");
     res.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
     });
-    res.end(index);
+    res.end(DEV_MODE ? injectDevClient(index) : index);
   }
+}
+
+function injectDevClient(html) {
+  if (!html.includes("</body>")) return html;
+  const script = `
+    <script>
+      (() => {
+        let disconnected = false;
+        let reloaded = false;
+        const reload = () => {
+          if (reloaded) return;
+          reloaded = true;
+          window.location.reload();
+        };
+        const events = new EventSource("/api/dev-events");
+        events.addEventListener("open", () => {
+          if (disconnected) reload();
+        });
+        events.addEventListener("reload", reload);
+        events.addEventListener("error", () => {
+          disconnected = true;
+        });
+      })();
+    </script>`;
+  return html.replace("</body>", `${script}\n  </body>`);
+}
+
+function handleDevEvents(req, res) {
+  if (!DEV_MODE) {
+    sendJson(res, 404, { error: "dev reload disabled" });
+    return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-store",
+    Connection: "keep-alive",
+  });
+  res.write(": connected\n\n");
+
+  const interval = setInterval(() => {
+    res.write(": keepalive\n\n");
+  }, 15000);
+
+  req.on("close", () => {
+    clearInterval(interval);
+  });
 }
 
 const server = createServer(async (req, res) => {
   try {
+    if (req.method === "GET" && req.url === "/api/dev-events") {
+      handleDevEvents(req, res);
+      return;
+    }
     if (req.method === "GET" && req.url === "/api/config") {
       sendJson(res, 200, { actions: listActions() });
       return;
@@ -559,6 +635,27 @@ const server = createServer(async (req, res) => {
   }
 });
 
+server.on("error", (error) => {
+  console.error(`Failed to start Werewolf Quack Lab UI on port ${PORT}: ${error.message}`);
+  killActiveChildren();
+  process.exit(1);
+});
+
+function shutdown(signal) {
+  console.log(`Received ${signal}; shutting down.`);
+  killActiveChildren();
+  server.close(() => {
+    process.exit(0);
+  });
+  setTimeout(() => {
+    process.exit(0);
+  }, 3000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`Werewolf Quack Lab UI: http://localhost:${PORT}`);
+  if (DEV_MODE) console.log("Dev reload enabled.");
 });
