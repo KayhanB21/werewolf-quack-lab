@@ -79,6 +79,22 @@ Clean up:
 To add players, edit `config/game.sample.json`. The generated Compose file is not
 source controlled.
 
+## Browser Round Runner
+
+For a step-by-step local view of one round, start the tiny browser runner:
+
+```bash
+make web
+```
+
+Then open `http://localhost:5174`. The page wraps the same `labctl` commands:
+start the containers, run day actions, query `public_log`, run wolf actions, and
+query `wolf_channel`. The `Full Round` button runs that sequence end to end, while
+`Smoke` still runs the fast assertion harness.
+
+For local oMLX, choose `oMLX`, enter the API key if your server requires one,
+click `Discover Models`, then run the round controls.
+
 ## Local Model Smoke With oMLX
 
 [oMLX](https://github.com/jundot/omlx) exposes an OpenAI-compatible API at
