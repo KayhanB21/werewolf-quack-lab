@@ -81,7 +81,11 @@
             <span id="activeCommand">No command running</span>
             <button class="secondary" type="button" data-clear>Clear</button>
           </div>
-          <pre id="log" tabindex="0"></pre>
+          <div id="timeline" class="timeline" aria-live="polite"></div>
+          <details class="raw-details">
+            <summary>Raw stream</summary>
+            <pre id="log" tabindex="0"></pre>
+          </details>
         </section>
       </section>
     </main>
