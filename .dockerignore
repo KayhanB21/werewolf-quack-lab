@@ -1,0 +1,7 @@
+.git
+.env
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp
+logs
+node_modules
