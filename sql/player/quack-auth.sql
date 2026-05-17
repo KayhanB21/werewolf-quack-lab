@@ -11,10 +11,10 @@ CREATE TABLE lab_secret (
 --   sig     = sha256(LAB_QUACK_SECRET || payload_b64), base64
 -- The macro recomputes the expected signature and checks expiry.
 CREATE MACRO lab_check_token(sid, client_token, server_token) AS (
-  to_base64(sha256(
+  to_base64(unhex(sha256(
     (SELECT secret FROM lab_secret LIMIT 1) ||
     string_split(client_token, '.')[1]
-  )) = string_split(client_token, '.')[2]
+  ))) = string_split(client_token, '.')[2]
   AND CAST(
     json_extract_string(
       CAST(from_base64(string_split(client_token, '.')[1]) AS VARCHAR),

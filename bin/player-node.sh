@@ -93,6 +93,11 @@ CREATE TABLE IF NOT EXISTS lab_secret (
   secret VARCHAR NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS quack_scopes (
+  scope_name VARCHAR PRIMARY KEY,
+  allowed_identifiers VARCHAR[]
+);
+
 DELETE FROM self;
 DELETE FROM game_flags;
 DELETE FROM knowledge;
@@ -100,10 +105,21 @@ DELETE FROM suspicions;
 DELETE FROM intents;
 DELETE FROM votes;
 DELETE FROM lab_secret;
+DELETE FROM quack_scopes;
 
 INSERT INTO self VALUES ('${NODE_ID}', '${ROLE}', ${PARTNER_SQL});
 INSERT INTO game_flags VALUES (${POST_GAME_SQL});
 INSERT INTO lab_secret VALUES ('${LAB_QUACK_SECRET}');
+
+INSERT INTO quack_scopes VALUES
+  ('whoami',         ['whoami']),
+  ('public_log',     ['public_intents']),
+  ('wolf_channel',   ['wolf_channel']),
+  ('seer_channel',   ['seer_channel']),
+  ('doctor_channel', ['doctor_channel']),
+  ('full_log',       ['post_game_intents']),
+  ('smoke',          ['public_intents', 'wolf_channel', 'post_game_intents', 'whoami']),
+  ('denied',         []);
 
 CREATE OR REPLACE VIEW public_intents AS
 SELECT round, agent_id, action, target, public_text, decided_at
@@ -139,10 +155,10 @@ WHERE (SELECT post_game FROM game_flags LIMIT 1);
 -- The macro recomputes the expected signature and checks expiry. No replay
 -- protection beyond TTL; that is fine for the lab.
 CREATE OR REPLACE MACRO lab_check_token(sid, client_token, server_token) AS (
-  to_base64(sha256(
+  to_base64(unhex(sha256(
     (SELECT secret FROM lab_secret LIMIT 1) ||
     string_split(client_token, '.')[1]
-  )) = string_split(client_token, '.')[2]
+  ))) = string_split(client_token, '.')[2]
   AND CAST(
     json_extract_string(
       CAST(from_base64(string_split(client_token, '.')[1]) AS VARCHAR),
