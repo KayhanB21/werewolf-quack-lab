@@ -9,6 +9,7 @@ RUN apt-get update \
     ca-certificates \
     curl \
     jq \
+    openssl \
     unzip \
   && rm -rf /var/lib/apt/lists/*
 

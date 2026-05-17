@@ -4,24 +4,19 @@ set -euo pipefail
 DUCKDB_BIN="${DUCKDB_BIN:-duckdb}"
 BOOTSTRAP_SQL="FORCE INSTALL quack FROM core_nightly; LOAD quack;"
 
-if [[ -n "${PLAYERS_JSON:-}" ]]; then
-  mapfile -t PLAYERS < <(jq -r '.[] | "\(.id):\(.token)"' <<<"${PLAYERS_JSON}")
-  EXPECTED_NAMES="$(jq -c '[.[].id] | sort' <<<"${PLAYERS_JSON}")"
-  EXPECTED_WOLVES="$(jq -c '[.[] | select(.role == "wolf") | .id] | sort' <<<"${PLAYERS_JSON}")"
-else
-  PLAYERS=(
-    "agent-a:${AGENT_A_TOKEN:-agent-a-dev-token}"
-    "agent-b:${AGENT_B_TOKEN:-agent-b-dev-token}"
-    "agent-c:${AGENT_C_TOKEN:-agent-c-dev-token}"
-    "agent-d:${AGENT_D_TOKEN:-agent-d-dev-token}"
-    "agent-e:${AGENT_E_TOKEN:-agent-e-dev-token}"
-  )
-  EXPECTED_NAMES='["agent-a","agent-b","agent-c","agent-d","agent-e"]'
-  EXPECTED_WOLVES='["agent-a","agent-d"]'
-fi
+: "${LAB_QUACK_SECRET:?LAB_QUACK_SECRET is required}"
+: "${PLAYERS_JSON:?PLAYERS_JSON is required}"
 
-EXPECTED_COUNT="${#PLAYERS[@]}"
+mapfile -t PLAYER_HOSTS < <(jq -r '.[].id' <<<"${PLAYERS_JSON}")
+EXPECTED_NAMES="$(jq -c '[.[].id] | sort' <<<"${PLAYERS_JSON}")"
+EXPECTED_WOLVES="$(jq -c '[.[] | select(.role == "wolf") | .id] | sort' <<<"${PLAYERS_JSON}")"
+
+EXPECTED_COUNT="${#PLAYER_HOSTS[@]}"
 EXPECTED_WOLF_COUNT="$(jq 'length' <<<"${EXPECTED_WOLVES}")"
+
+mint_token() {
+  LAB_QUACK_SECRET="${LAB_QUACK_SECRET}" /app/bin/mint-token.sh "$1" 60 gateway
+}
 
 duck_json() {
   local sql="$1"
@@ -34,14 +29,15 @@ escape_sql_string() {
 
 federate_json() {
   local remote_sql="$1"
+  local scope="${2:-smoke}"
   local escaped_remote_sql
   escaped_remote_sql="$(escape_sql_string "${remote_sql}")"
+  local token
+  token="$(mint_token "${scope}")"
   local union_sql=""
   local first="true"
 
-  for player in "${PLAYERS[@]}"; do
-    local host="${player%%:*}"
-    local token="${player#*:}"
+  for host in "${PLAYER_HOSTS[@]}"; do
     if [[ "${first}" == "true" ]]; then
       first="false"
     else
@@ -92,10 +88,9 @@ assert_jq "${full_json}" 'length == 0' "post_game_intents is closed while POST_G
 
 set +e
 denied_output="$(
-  first_player="${PLAYERS[0]}"
-  first_host="${first_player%%:*}"
-  first_token="${first_player#*:}"
-  duck_json "SELECT * FROM quack_query('quack:${first_host}:9494', 'SELECT round, agent_id, rationale FROM intents', token => '${first_token}', disable_ssl => true);" 2>&1
+  first_host="${PLAYER_HOSTS[0]}"
+  token="$(mint_token denied)"
+  duck_json "SELECT * FROM quack_query('quack:${first_host}:9494', 'SELECT round, agent_id, rationale FROM intents', token => '${token}', disable_ssl => true);" 2>&1
 )"
 denied_status="$?"
 set -e

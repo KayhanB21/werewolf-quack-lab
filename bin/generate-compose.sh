@@ -35,7 +35,6 @@ mkdir -p "${OUT_DIR}"
 
 PLAYERS_JSON="$(
   jq -c '
-    def token_for($id): ($id | gsub("[^A-Za-z0-9_-]"; "-")) + "-dev-token";
     .players as $players
     | ([ $players[] | select(.role == "wolf") | .id ]) as $wolves
     | [ $players[]
@@ -43,7 +42,6 @@ PLAYERS_JSON="$(
         | {
             id: $p.id,
             role: $p.role,
-            token: ($p.token // token_for($p.id)),
             partners: (if $p.role == "wolf" then ($wolves - [$p.id]) else [] end)
           }
       ]
@@ -88,6 +86,17 @@ MODEL_BASE_URL="$(jq -r '.model.base_url // "https://api.openai.com/v1"' "${CONF
 
 PLAYERS_JSON_ESCAPED="$(printf "%s" "${PLAYERS_JSON}" | sed "s/'/''/g")"
 
+LAB_SECRET_PATH="${OUT_DIR}/lab-secret"
+if [[ ! -s "${LAB_SECRET_PATH}" ]]; then
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32 > "${LAB_SECRET_PATH}"
+  else
+    head -c 64 /dev/urandom | xxd -p -c 256 > "${LAB_SECRET_PATH}"
+  fi
+  chmod 600 "${LAB_SECRET_PATH}"
+fi
+LAB_SECRET="$(cat "${LAB_SECRET_PATH}")"
+
 cat > "${OUT_DIR}/players.json" <<<"${PLAYERS_JSON}"
 
 cat > "${OUT_DIR}/docker-compose.yml" <<YAML
@@ -97,7 +106,6 @@ YAML
 while IFS= read -r player; do
   id="$(jq -r '.id' <<<"${player}")"
   role="$(jq -r '.role' <<<"${player}")"
-  token="$(jq -r '.token' <<<"${player}")"
   partners="$(jq -r '.partners | join(",")' <<<"${player}")"
   cat >> "${OUT_DIR}/docker-compose.yml" <<YAML
   ${id}:
@@ -113,7 +121,7 @@ while IFS= read -r player; do
       ROLE: ${role}
       PARTNERS: "${partners}"
       PLAYER_IDS: "${PLAYER_IDS}"
-      QUACK_TOKEN: ${token}
+      LAB_QUACK_SECRET: ${LAB_SECRET}
       LLM_PROVIDER: \${LLM_PROVIDER:-${MODEL_PROVIDER}}
       LLM_MODEL: \${LLM_MODEL:-${MODEL_MODEL}}
       LLM_BASE_URL: \${LLM_BASE_URL:-${MODEL_BASE_URL}}
@@ -121,6 +129,11 @@ while IFS= read -r player; do
       POST_GAME: \${POST_GAME:-false}
     expose:
       - "9494"
+    networks:
+      - lab-${id}
+    mem_limit: \${LAB_PLAYER_MEM_LIMIT:-512m}
+    cpus: \${LAB_PLAYER_CPUS:-0.5}
+    pids_limit: \${LAB_PLAYER_PIDS_LIMIT:-256}
     volumes:
       - ${id}-data:/data
 
@@ -129,6 +142,19 @@ done < <(jq -c '.[]' <<<"${PLAYERS_JSON}")
 
 cat >> "${OUT_DIR}/docker-compose.yml" <<YAML
   gateway:
+    mem_limit: \${LAB_GATEWAY_MEM_LIMIT:-1g}
+    cpus: \${LAB_GATEWAY_CPUS:-1.0}
+    pids_limit: \${LAB_GATEWAY_PIDS_LIMIT:-512}
+    networks:
+YAML
+
+while IFS= read -r id; do
+  cat >> "${OUT_DIR}/docker-compose.yml" <<YAML
+      - lab-${id}
+YAML
+done < <(jq -r '.[].id' <<<"${PLAYERS_JSON}")
+
+cat >> "${OUT_DIR}/docker-compose.yml" <<YAML
     depends_on:
 YAML
 
@@ -140,7 +166,20 @@ done < <(jq -r '.[].id' <<<"${PLAYERS_JSON}")
 
 cat >> "${OUT_DIR}/docker-compose.yml" <<YAML
     environment:
+      LAB_QUACK_SECRET: ${LAB_SECRET}
       PLAYERS_JSON: '${PLAYERS_JSON_ESCAPED}'
+
+networks:
+YAML
+
+while IFS= read -r id; do
+  cat >> "${OUT_DIR}/docker-compose.yml" <<YAML
+  lab-${id}:
+    driver: bridge
+YAML
+done < <(jq -r '.[].id' <<<"${PLAYERS_JSON}")
+
+cat >> "${OUT_DIR}/docker-compose.yml" <<YAML
 
 volumes:
 YAML

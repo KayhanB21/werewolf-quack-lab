@@ -46,6 +46,27 @@ if ! jq -e '.[] | select(.id == "agent-a") | .partners == ["agent-d"]' >/dev/nul
   exit 1
 fi
 
+if jq -e '.[] | has("token")' >/dev/null <<<"${players_json}"; then
+  echo "players.json should no longer carry per-player tokens (tokens are minted per call)" >&2
+  exit 1
+fi
+
+if [[ ! -s "${OUT_DIR}/lab-secret" ]]; then
+  echo "generate-compose should produce a lab-secret file" >&2
+  exit 1
+fi
+
+secret_value="$(cat "${OUT_DIR}/lab-secret")"
+if [[ "${#secret_value}" -lt 32 ]]; then
+  echo "lab-secret should be at least 32 chars of entropy" >&2
+  exit 1
+fi
+
+if ! grep -Fq "LAB_QUACK_SECRET: ${secret_value}" <<<"${compose_yaml}"; then
+  echo "generated compose should inject LAB_QUACK_SECRET into services" >&2
+  exit 1
+fi
+
 if ! grep -q "agent-f:" <<<"${compose_yaml}"; then
   echo "generated compose should include agent-f service" >&2
   exit 1
@@ -68,6 +89,65 @@ fi
 
 if ! grep -Fq 'LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8000/v1}' <<<"${compose_yaml}"; then
   echo "generated compose should preserve the configured LLM base URL" >&2
+  exit 1
+fi
+
+if ! grep -Eq "^networks:" <<<"${compose_yaml}"; then
+  echo "generated compose should declare a top-level networks: block" >&2
+  exit 1
+fi
+
+for id in agent-a agent-b agent-c agent-d agent-e agent-f; do
+  if ! grep -q "  lab-${id}:" <<<"${compose_yaml}"; then
+    echo "generated compose should declare a per-player network lab-${id}" >&2
+    exit 1
+  fi
+done
+
+if ! grep -Fq "mem_limit: \${LAB_PLAYER_MEM_LIMIT:-512m}" <<<"${compose_yaml}"; then
+  echo "generated compose should set a per-player memory cap" >&2
+  exit 1
+fi
+
+if ! grep -Fq "pids_limit: \${LAB_PLAYER_PIDS_LIMIT:-256}" <<<"${compose_yaml}"; then
+  echo "generated compose should set a per-player pid cap" >&2
+  exit 1
+fi
+
+if ! grep -Fq "cpus: \${LAB_GATEWAY_CPUS:-1.0}" <<<"${compose_yaml}"; then
+  echo "generated compose should set a gateway cpu cap" >&2
+  exit 1
+fi
+
+# Each player must list exactly one network (its own lab-<id>) so it cannot
+# reach the other players. The gateway should list ALL player networks.
+section_lines() {
+  local header="$1"
+  awk -v hdr="${header}" '
+    $0 == hdr {flag=1; next}
+    /^[a-zA-Z]/ {flag=0}
+    /^  [a-zA-Z]/ {flag=0}
+    flag {print}
+  ' <<<"${compose_yaml}"
+}
+
+gateway_networks="$(section_lines "  gateway:" | grep -E '^\s+- lab-' | sort -u)"
+gateway_network_count="$(grep -c . <<<"${gateway_networks}")"
+if [[ "${gateway_network_count}" -ne 6 ]]; then
+  echo "gateway should attach to all six per-player networks (got ${gateway_network_count})" >&2
+  echo "${gateway_networks}" >&2
+  exit 1
+fi
+
+agent_a_networks="$(section_lines "  agent-a:" | grep -E '^\s+- lab-' | sort -u)"
+agent_a_network_count="$(grep -c . <<<"${agent_a_networks}")"
+if [[ "${agent_a_network_count}" -ne 1 ]]; then
+  echo "agent-a should attach to exactly one network (got ${agent_a_network_count})" >&2
+  echo "${agent_a_networks}" >&2
+  exit 1
+fi
+if ! grep -Fq -- "- lab-agent-a" <<<"${agent_a_networks}"; then
+  echo "agent-a should be on its own lab-agent-a network" >&2
   exit 1
 fi
 

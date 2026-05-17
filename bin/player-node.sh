@@ -8,7 +8,7 @@ ROLE="${ROLE:?ROLE is required}"
 PARTNERS="${PARTNERS:-}"
 PLAYER_IDS="${PLAYER_IDS:?PLAYER_IDS is required}"
 QUACK_PORT="${QUACK_PORT:-9494}"
-QUACK_TOKEN="${QUACK_TOKEN:-${NODE_ID}-dev-token}"
+LAB_QUACK_SECRET="${LAB_QUACK_SECRET:?LAB_QUACK_SECRET is required}"
 POST_GAME="${POST_GAME:-false}"
 DB_PATH="${DB_PATH:-${DATA_DIR}/${NODE_ID}.duckdb}"
 INIT_SQL="/tmp/${NODE_ID}-init.sql"
@@ -89,9 +89,8 @@ CREATE TABLE IF NOT EXISTS votes (
   decided_at TIMESTAMP NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS quack_tokens (
-  auth_token VARCHAR PRIMARY KEY,
-  user_name VARCHAR NOT NULL
+CREATE TABLE IF NOT EXISTS lab_secret (
+  secret VARCHAR NOT NULL
 );
 
 DELETE FROM self;
@@ -100,11 +99,11 @@ DELETE FROM knowledge;
 DELETE FROM suspicions;
 DELETE FROM intents;
 DELETE FROM votes;
-DELETE FROM quack_tokens;
+DELETE FROM lab_secret;
 
 INSERT INTO self VALUES ('${NODE_ID}', '${ROLE}', ${PARTNER_SQL});
 INSERT INTO game_flags VALUES (${POST_GAME_SQL});
-INSERT INTO quack_tokens VALUES ('${QUACK_TOKEN}', 'gateway');
+INSERT INTO lab_secret VALUES ('${LAB_QUACK_SECRET}');
 
 CREATE OR REPLACE VIEW public_intents AS
 SELECT round, agent_id, action, target, public_text, decided_at
@@ -134,8 +133,22 @@ SELECT round, agent_id, action, target, public_text, rationale, decided_at
 FROM intents
 WHERE (SELECT post_game FROM game_flags LIMIT 1);
 
+-- A lab token is "<payload_b64>.<sig_b64>" where:
+--   payload   = compact JSON {client, scope, exp, nonce}
+--   signature = sha256(LAB_QUACK_SECRET || payload_b64), base64-encoded
+-- The macro recomputes the expected signature and checks expiry. No replay
+-- protection beyond TTL; that is fine for the lab.
 CREATE OR REPLACE MACRO lab_check_token(sid, client_token, server_token) AS (
-  EXISTS (SELECT 1 FROM quack_tokens WHERE auth_token = client_token)
+  to_base64(sha256(
+    (SELECT secret FROM lab_secret LIMIT 1) ||
+    string_split(client_token, '.')[1]
+  )) = string_split(client_token, '.')[2]
+  AND CAST(
+    json_extract_string(
+      CAST(from_base64(string_split(client_token, '.')[1]) AS VARCHAR),
+      '\$.exp'
+    ) AS BIGINT
+  ) > epoch(now())
 );
 
 CREATE OR REPLACE MACRO lab_authorize(sid, query) AS (
@@ -144,7 +157,7 @@ CREATE OR REPLACE MACRO lab_authorize(sid, query) AS (
     regexp_matches(lower(query), '\b(public_intents|wolf_channel|seer_channel|doctor_channel|post_game_intents)\b')
     OR regexp_matches(lower(query), 'whoami\(\)')
   )
-  AND NOT regexp_matches(lower(query), '\b(self|intents|knowledge|suspicions|votes|game_flags|quack_tokens)\b')
+  AND NOT regexp_matches(lower(query), '\b(self|intents|knowledge|suspicions|votes|game_flags|lab_secret)\b')
 );
 
 SET GLOBAL quack_authentication_function = 'lab_check_token';
@@ -162,7 +175,7 @@ CALL quack_identify(
 SELECT *
 FROM quack_serve(
   'quack:0.0.0.0:${QUACK_PORT}',
-  token => '${QUACK_TOKEN}',
+  token => 'lab-server',
   allow_other_hostname => true,
   disable_ssl => true
 );

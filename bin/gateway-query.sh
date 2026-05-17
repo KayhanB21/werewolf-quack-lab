@@ -9,21 +9,11 @@ QUERY_SQL="/tmp/gateway-${QUERY_NAME}.sql"
 
 mkdir -p "${DATA_DIR}"
 
-load_players() {
-  if [[ -n "${PLAYERS_JSON:-}" ]]; then
-    mapfile -t PLAYERS < <(jq -r '.[] | "\(.id):\(.token)"' <<<"${PLAYERS_JSON}")
-  else
-    PLAYERS=(
-      "agent-a:${AGENT_A_TOKEN:-agent-a-dev-token}"
-      "agent-b:${AGENT_B_TOKEN:-agent-b-dev-token}"
-      "agent-c:${AGENT_C_TOKEN:-agent-c-dev-token}"
-      "agent-d:${AGENT_D_TOKEN:-agent-d-dev-token}"
-      "agent-e:${AGENT_E_TOKEN:-agent-e-dev-token}"
-    )
-  fi
-}
+: "${LAB_QUACK_SECRET:?LAB_QUACK_SECRET is required}"
+: "${PLAYERS_JSON:?PLAYERS_JSON is required}"
 
-load_players
+mapfile -t PLAYER_HOSTS < <(jq -r '.[].id' <<<"${PLAYERS_JSON}")
+TOKEN="$(LAB_QUACK_SECRET="${LAB_QUACK_SECRET}" /app/bin/mint-token.sh "${QUERY_NAME}" 60 gateway)"
 
 case "${QUERY_NAME}" in
   whoami)
@@ -90,16 +80,14 @@ SQL
 }
 
 if [[ "${QUERY_NAME}" == "denied_private_table" ]]; then
-  first_player="${PLAYERS[0]}"
-  first_host="${first_player%%:*}"
-  first_token="${first_player#*:}"
+  first_host="${PLAYER_HOSTS[0]}"
   cat >> "${QUERY_SQL}" <<SQL
 
 SELECT *
 FROM quack_query(
   'quack:${first_host}:9494',
   '${REMOTE_SQL}',
-  token => '${first_token}',
+  token => '${TOKEN}',
   disable_ssl => true
 );
 SQL
@@ -124,16 +112,14 @@ CREATE TEMP TABLE tmp_federated AS
 SQL
 
 first="true"
-for player in "${PLAYERS[@]}"; do
-  host="${player%%:*}"
-  token="${player#*:}"
+for host in "${PLAYER_HOSTS[@]}"; do
   if [[ "${first}" == "true" ]]; then
     first="false"
   else
     printf "\nUNION ALL\n" >> "${QUERY_SQL}"
   fi
   printf "SELECT * FROM quack_query('quack:%s:9494', '%s', token => '%s', disable_ssl => true)" \
-    "${host}" "${REMOTE_SQL}" "${token}" >> "${QUERY_SQL}"
+    "${host}" "${REMOTE_SQL}" "${TOKEN}" >> "${QUERY_SQL}"
 done
 
 cat >> "${QUERY_SQL}" <<SQL
