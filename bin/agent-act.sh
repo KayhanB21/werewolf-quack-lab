@@ -282,6 +282,23 @@ model_content_turn_json() {
   text_turn_json "${content}"
 }
 
+role_brief() {
+  case "${ROLE}" in
+    wolf)
+      printf "You are a WOLF. Each night your wolf team chooses one player to eliminate. You want the village to fail to identify the wolves. Lie when useful; sound like a villager during the day."
+      ;;
+    seer)
+      printf "You are the SEER. Each night you may investigate one player and learn whether they are a wolf. You want the village to win. Decide when to reveal your information: claiming Seer too early invites a wolf kill."
+      ;;
+    doctor)
+      printf "You are the DOCTOR. Each night you may protect one player (including yourself) from the wolf's attack. You want the village to win."
+      ;;
+    *)
+      printf "You are a VILLAGER. You have no special ability. You win by helping the village correctly lynch the wolves."
+      ;;
+  esac
+}
+
 openai_turn_json() {
   if [[ "${LLM_PROVIDER}" == "openai" && -z "${LLM_API_KEY}" ]]; then
     echo "LLM_API_KEY is required when LLM_PROVIDER=${LLM_PROVIDER}" >&2
@@ -289,30 +306,56 @@ openai_turn_json() {
   fi
 
   local wolf_channel="${WOLF_CHANNEL_JSON:-[]}"
+  local context_json="${CONTEXT_JSON:-{\}}"
+  local role_text
+  role_text="$(role_brief)"
+  local system_text
+  system_text="You are ${NODE_ID}, one of the agents playing Werewolf.
+
+${role_text}
+
+Always respond with a single JSON object of this shape:
+{
+  \"rationale\": \"<short private reasoning, 1-2 sentences>\",
+  \"public_text\": \"<what you say out loud this rotation, 1-2 sentences, always non-empty during day>\",
+  \"done\": <true ONLY if you genuinely have nothing new to add after speaking at least once this round, otherwise false>,
+  \"action\": \"wolf-kill|wolf-done|seer-investigate|doctor-save|speak|accuse|investigate|vote\",
+  \"target\": \"<one of the living agent ids, or empty when no target>\"
+}
+
+Action type by phase:
+- day: action is speak, accuse, or investigate. target may be empty for speak; otherwise an alive non-self id. public_text must be present.
+- vote: action=vote. target=an alive non-self id to lynch, OR target=\"\" (empty) to abstain. public_text optional.
+- wolf (you are a wolf): action=wolf-kill with target=an alive non-partner non-self id; or action=wolf-done (or wolf-kill with done=true) to accept the wolf channel's current target as final. public_text must be empty.
+- seer (you are the seer): action=seer-investigate, target=an alive non-self id, public_text must be empty.
+- doctor (you are the doctor): action=doctor-save, target=any alive id including yourself, public_text must be empty.
+
+The word JSON is required. Keep rationale honest and private. Keep public_text consistent with your bluff or claim. Never reveal that you are an LLM or break character."
   local payload
   payload="$(
     jq -n \
       --arg model "${LLM_MODEL}" \
+      --arg system "${system_text}" \
       --arg node "${NODE_ID}" \
       --arg role "${ROLE}" \
       --arg partners "${PARTNERS:-none}" \
-      --arg player_ids "${PLAYER_IDS}" \
       --arg phase "${PHASE}" \
       --arg round "${ROUND}" \
       --arg wolf_channel "${wolf_channel}" \
+      --arg context "${context_json}" \
       '{
         model: $model,
         temperature: 0.2,
-        max_tokens: 220,
+        max_tokens: 260,
         response_format: {type: "json_object"},
         messages: [
           {
             role: "system",
-            content: "You are one Werewolf game agent. Return one JSON object only with action, target, public_text, rationale, and (for wolves) an optional boolean done. The word JSON is required. In day phase, this is public discussion only: use speak, accuse, or investigate, and do not vote. In vote phase, use vote. In wolf phase, choose a non-partner non-self alive target and keep public_text empty: emit action=wolf-kill to propose this target, or action=wolf-kill with done=true (or action=wolf-done) when you accept the channel consensus as final. In seer phase, use seer-investigate, choose an alive non-self target, and keep public_text empty. In doctor phase, use doctor-save, choose any alive target including yourself, and keep public_text empty. Make public_text a short natural sentence from this agent only when the phase allows public speech."
+            content: $system
           },
           {
             role: "user",
-            content: ("Return JSON for this turn. agent=" + $node + " role=" + $role + " partners=" + $partners + " player_ids=" + $player_ids + " phase=" + $phase + " round=" + $round + " wolf_channel=" + $wolf_channel)
+            content: ("Return JSON for this turn.\nagent=" + $node + "\nrole=" + $role + "\npartners=" + $partners + "\nphase=" + $phase + "\nround=" + $round + "\ncontext=" + $context + "\nwolf_channel=" + $wolf_channel)
           }
         ]
       }'
@@ -419,10 +462,15 @@ normalize_turn_json() {
       ;;
     vote)
       action="vote"
-      target="$(normalize_target "${raw_target}")"
-      public_text="${raw_public_text}"
-      if [[ -z "${public_text}" ]]; then
-        public_text="$(fallback_public_text "${action}" "${target}")"
+      if [[ -z "${raw_target}" ]]; then
+        target=""
+        public_text="${raw_public_text:-${NODE_ID}: I abstain this round.}"
+      else
+        target="$(normalize_target "${raw_target}")"
+        public_text="${raw_public_text}"
+        if [[ -z "${public_text}" ]]; then
+          public_text="$(fallback_public_text "${action}" "${target}")"
+        fi
       fi
       rationale="${raw_rationale:-No rationale returned.}"
       ;;

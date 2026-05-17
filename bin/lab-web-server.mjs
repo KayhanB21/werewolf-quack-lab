@@ -9,11 +9,11 @@ import {
   buildContextForAgent,
   buildGameConfig,
   buildLabEnv,
-  chooseTarget,
   getActionPlan,
   latestKillsPerWolf,
   latestRowPerAgent,
   listActions,
+  resolveLynch,
   resolveNightOutcome,
   toHostModelUrl,
 } from "./lab-web-actions.mjs";
@@ -369,35 +369,42 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
     if (dayLog.code !== 0) return false;
     publicLog.push(...dayLog.rows);
 
-    const dayVotes = dayLog.rows;
-    const dayTarget = chooseTarget(dayVotes);
-    if (dayTarget) {
-      alive = alive.filter((id) => id !== dayTarget.target);
-      const revealedRole = roles.get(dayTarget.target) || "unknown";
+    const lynch = resolveLynch(dayLog.rows);
+    if (lynch.outcome === "lynch") {
+      alive = alive.filter((id) => id !== lynch.target);
+      const revealedRole = roles.get(lynch.target) || "unknown";
       eliminated.push({
-        id: dayTarget.target,
+        id: lynch.target,
         role: revealedRole,
         round,
         phase: "day",
         cause: "lynch",
       });
-      publicEvents.push(
-        `Round ${round}: ${dayTarget.target} was lynched (${dayTarget.votes} vote(s)). Revealed role: ${revealedRole}.`,
+      const announcement = `Round ${round}: ${lynch.target} was lynched (${lynch.votes} vote(s)). Revealed role: ${revealedRole}.`;
+      publicEvents.push(announcement);
+      await runBufferedStep(
+        "./bin/labctl",
+        ["ref-reveal", lynch.target, String(round), announcement],
+        roundEnv,
       );
       history.push({
         round,
         phase: "day",
         event: "vote",
-        target: dayTarget.target,
-        votes: dayTarget.votes,
+        target: lynch.target,
+        votes: lynch.votes,
       });
       writeEvent(res, "stdout", {
-        data: `[referee] day ${round}: ${dayTarget.target} eliminated by ${dayTarget.votes} vote(s); revealed role: ${revealedRole}\n`,
+        data: `[referee] day ${round}: ${lynch.target} eliminated by ${lynch.votes} vote(s); revealed role: ${revealedRole}\n`,
       });
     } else {
-      history.push({ round, phase: "day", event: "no-elimination" });
-      publicEvents.push(`Round ${round}: vote ended with no lynch.`);
-      writeEvent(res, "stdout", { data: `[referee] day ${round}: no elimination\n` });
+      const tied = lynch.votes > 0;
+      const note = tied
+        ? `Round ${round}: vote ended in a tie at ${lynch.votes} (no lynch).`
+        : `Round ${round}: vote ended with no lynch.`;
+      history.push({ round, phase: "day", event: tied ? "tie" : "no-elimination" });
+      publicEvents.push(note);
+      writeEvent(res, "stdout", { data: `[referee] ${note}\n` });
     }
 
     const dayWin = winnerFor(alive, roles);
@@ -458,7 +465,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
       `referee round ${round} doctor`,
       liveDoctors,
       "doctor",
-      { ...roundEnv, ACTIVE_PLAYER_IDS: alive.join(",") },
+      envForId("night-doctor", round, roundEnv),
       res,
       shouldAbort,
       isClosed,
@@ -483,7 +490,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
       `referee round ${round} seer`,
       liveSeers,
       "seer",
-      { ...roundEnv, ACTIVE_PLAYER_IDS: alive.join(",") },
+      envForId("night-seer", round, roundEnv),
       res,
       shouldAbort,
       isClosed,
@@ -506,7 +513,21 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
     const night = resolveNightOutcome(wolfLog.rows, doctorLog.rows);
     if (night.outcome === "kill") {
       alive = alive.filter((id) => id !== night.target);
-      eliminated.push({ id: night.target, round, phase: "wolf" });
+      const revealedRole = roles.get(night.target) || "unknown";
+      eliminated.push({
+        id: night.target,
+        role: revealedRole,
+        round,
+        phase: "wolf",
+        cause: "wolf-kill",
+      });
+      const announcement = `Round ${round}: ${night.target} was killed by wolves. Revealed role: ${revealedRole}.`;
+      publicEvents.push(announcement);
+      await runBufferedStep(
+        "./bin/labctl",
+        ["ref-reveal", night.target, String(round), announcement],
+        roundEnv,
+      );
       history.push({
         round,
         phase: "wolf",
@@ -515,7 +536,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
         votes: night.votes,
       });
       writeEvent(res, "stdout", {
-        data: `[referee] night ${round}: ${night.target} killed by wolves\n`,
+        data: `[referee] night ${round}: ${night.target} killed by wolves; revealed role: ${revealedRole}\n`,
       });
     } else if (night.outcome === "saved") {
       history.push({
@@ -525,11 +546,13 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
         target: night.target,
         votes: night.votes,
       });
+      publicEvents.push(`Round ${round}: the doctor's save cancelled the wolves' attack.`);
       writeEvent(res, "stdout", {
         data: `[referee] night ${round}: ${night.target} was attacked but saved by the doctor\n`,
       });
     } else {
       history.push({ round, phase: "wolf", event: "no-kill" });
+      publicEvents.push(`Round ${round}: night passed without a kill.`);
       writeEvent(res, "stdout", { data: `[referee] night ${round}: no kill\n` });
     }
 
@@ -539,10 +562,10 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
       if (!proposal || !proposal.target) continue;
       const targetRole = roles.get(proposal.target);
       if (!targetRole) continue;
-      const content = `Round ${round}: ${proposal.target} is ${targetRole}.`;
+      const note = `Round ${round}: ${proposal.target} is ${targetRole}.`;
       const writeResult = await runBufferedStep(
         "./bin/labctl",
-        ["ref-knowledge", seer, String(round), "seer", content],
+        ["ref-knowledge", seer, String(round), "seer", note],
         roundEnv,
       );
       if (writeResult.code !== 0) {
@@ -550,6 +573,9 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
           data: `[referee] failed to write seer knowledge for ${seer}: ${writeResult.stderr}\n`,
         });
       } else {
+        const seerNotes = privateNotesByAgent.get(seer) || [];
+        seerNotes.push(note);
+        privateNotesByAgent.set(seer, seerNotes);
         history.push({
           round,
           phase: "seer",

@@ -27,6 +27,9 @@ run_action() {
     LLM_PROVIDER="${provider}" \
     LLM_BASE_URL="http://fake-openai.local/v1" \
     FAKE_TURN_CONTENT="${fake_content}" \
+    FAKE_CURL_PAYLOAD_PATH="${FAKE_CURL_PAYLOAD_PATH:-}" \
+    CONTEXT_JSON="${CONTEXT_JSON:-{\}}" \
+    WOLF_CHANNEL_JSON="${WOLF_CHANNEL_JSON:-[]}" \
     PATH="${test_path}" \
     ACTION_PIPE="${pipe_path}" \
     "${ROOT_DIR}/bin/agent-act.sh" --phase "${phase}" --round 2 >/dev/null
@@ -70,6 +73,13 @@ mkdir -p "${fake_bin}"
 cat > "${fake_bin}/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+prev=""
+for arg in "$@"; do
+  if [[ "${prev}" == "-d" && -n "${FAKE_CURL_PAYLOAD_PATH:-}" ]]; then
+    printf "%s" "${arg}" > "${FAKE_CURL_PAYLOAD_PATH}"
+  fi
+  prev="${arg}"
+done
 jq -n --arg content "${FAKE_TURN_CONTENT:?FAKE_TURN_CONTENT is required}" \
   '{choices: [{message: {content: $content}}]}'
 SH
@@ -232,6 +242,70 @@ run_action \
 if ! grep -Fq "'wolf-done', 'agent-b'" "${model_wolf_done_sql}"; then
   echo "wolf turn with done=true should normalize to a wolf-done action" >&2
   cat "${model_wolf_done_sql}" >&2
+  exit 1
+fi
+
+context_payload_path="${TMP_DIR}/context-payload.json"
+context_sql="${TMP_DIR}/context.sql"
+CONTEXT_JSON='{"round":2,"phase":"day-discuss","you":"agent-a","alive":["agent-a","agent-b","agent-d"],"eliminated":[{"id":"agent-c","role":"villager","round":1,"cause":"wolf-kill"}],"public_events":["Round 1: agent-c was killed by wolves. Revealed role: villager."],"public_log":[{"round":1,"speaker":"agent-b","action":"speak","target":"","text":"I trust agent-a"}],"private_notes":["Round 1: agent-d is wolf."]}' \
+FAKE_CURL_PAYLOAD_PATH="${context_payload_path}" \
+run_action \
+  "day" \
+  "seer" \
+  "" \
+  "${context_sql}" \
+  "openai-compatible" \
+  '{"action":"accuse","target":"agent-d","public_text":"I have evidence agent-d is a wolf.","rationale":"Reveal seer claim now."}' \
+  "${fake_bin}:${PATH}"
+
+if [[ ! -s "${context_payload_path}" ]]; then
+  echo "fake curl did not capture the OpenAI payload" >&2
+  exit 1
+fi
+
+if ! jq -e '.messages[1].content | contains("context=")' >/dev/null <"${context_payload_path}"; then
+  echo "OpenAI user message should embed context=<json>" >&2
+  cat "${context_payload_path}" >&2
+  exit 1
+fi
+
+if ! jq -e '.messages[1].content | contains("Revealed role: villager")' >/dev/null <"${context_payload_path}"; then
+  echo "OpenAI user message should include the public events from CONTEXT_JSON" >&2
+  cat "${context_payload_path}" >&2
+  exit 1
+fi
+
+if ! jq -e '.messages[1].content | contains("agent-d is wolf")' >/dev/null <"${context_payload_path}"; then
+  echo "OpenAI user message should include the agent's private notes" >&2
+  cat "${context_payload_path}" >&2
+  exit 1
+fi
+
+if ! jq -e '.messages[0].content | test("You are the SEER")' >/dev/null <"${context_payload_path}"; then
+  echo "OpenAI system prompt should include the role brief for the seer" >&2
+  cat "${context_payload_path}" >&2
+  exit 1
+fi
+
+abstain_sql="${TMP_DIR}/abstain.sql"
+run_action \
+  "vote" \
+  "villager" \
+  "" \
+  "${abstain_sql}" \
+  "openai-compatible" \
+  '{"action":"vote","target":"","public_text":"","rationale":"I do not have enough information to vote."}' \
+  "${fake_bin}:${PATH}"
+
+if ! grep -Fq "'vote', NULL" "${abstain_sql}"; then
+  echo "vote with empty target should insert target=NULL (abstain)" >&2
+  cat "${abstain_sql}" >&2
+  exit 1
+fi
+
+if ! grep -Fq "I abstain this round" "${abstain_sql}"; then
+  echo "abstain should have a default public_text noting the abstention" >&2
+  cat "${abstain_sql}" >&2
   exit 1
 fi
 

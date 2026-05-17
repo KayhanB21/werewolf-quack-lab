@@ -98,6 +98,7 @@ run_one_agent_action() {
   compose exec -T \
     -e "PLAYER_IDS=${active_player_ids}" \
     -e "WOLF_CHANNEL_JSON=${WOLF_CHANNEL_JSON:-[]}" \
+    -e "CONTEXT_JSON=${CONTEXT_JSON:-{\}}" \
     "${id}" \
     /app/bin/agent-act.sh --phase "${phase}" --round "${ROUND}" < /dev/null
 }

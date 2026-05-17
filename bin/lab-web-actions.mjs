@@ -311,6 +311,31 @@ export function latestKillsPerWolf(rows, liveWolves) {
   return tally;
 }
 
+export function resolveLynch(rows) {
+  const counts = new Map();
+  for (const row of rows || []) {
+    if (!row || !row.target) continue;
+    counts.set(row.target, (counts.get(row.target) || 0) + 1);
+  }
+  if (counts.size === 0) {
+    return { outcome: "abstain", target: null, votes: 0 };
+  }
+  let topVotes = 0;
+  let topTargets = [];
+  for (const [target, votes] of counts) {
+    if (votes > topVotes) {
+      topVotes = votes;
+      topTargets = [target];
+    } else if (votes === topVotes) {
+      topTargets.push(target);
+    }
+  }
+  if (topTargets.length !== 1) {
+    return { outcome: "abstain", target: null, votes: topVotes };
+  }
+  return { outcome: "lynch", target: topTargets[0], votes: topVotes };
+}
+
 export function resolveNightOutcome(wolfRows, doctorRows) {
   const wolfTarget = chooseTarget(wolfRows);
   if (!wolfTarget) {

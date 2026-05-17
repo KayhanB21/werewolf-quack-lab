@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  buildContextForAgent,
   buildGameConfig,
   buildLabEnv,
   chooseTarget,
@@ -283,5 +284,56 @@ const rotationLogSummary = summarizeStep(
 );
 assert.equal(rotationLogSummary.title, "Round 2 Wolf Channel (rotation 2)");
 assert.equal(rotationLogSummary.rows[0].target, "agent-c");
+
+const privateNotes = new Map([
+  ["agent-c", ["Round 1: agent-a is wolf."]],
+  ["agent-b", []],
+]);
+const sampleContext = buildContextForAgent("agent-c", {
+  round: 2,
+  phase: "night-seer",
+  alive: ["agent-b", "agent-c", "agent-d"],
+  eliminated: [{ id: "agent-a", role: "wolf", round: 1, cause: "lynch" }],
+  publicEvents: ["Round 1: agent-a was lynched. Revealed role: wolf."],
+  publicLog: [
+    { round: 1, agent_id: "agent-b", action: "speak", target: "", public_text: "I trust agent-c." },
+    { round: 1, agent_id: "agent-c", action: "accuse", target: "agent-a", public_text: "Agent-a is shady." },
+  ],
+  privateNotesByAgent: privateNotes,
+});
+assert.equal(sampleContext.you, "agent-c");
+assert.equal(sampleContext.phase, "night-seer");
+assert.deepEqual(sampleContext.alive, ["agent-b", "agent-c", "agent-d"]);
+assert.deepEqual(sampleContext.eliminated[0], {
+  id: "agent-a",
+  role: "wolf",
+  round: 1,
+  cause: "lynch",
+});
+assert.equal(sampleContext.private_notes[0], "Round 1: agent-a is wolf.");
+assert.equal(sampleContext.public_log[0].speaker, "agent-b");
+assert.equal(sampleContext.public_log[1].action, "accuse");
+
+const villagerContext = buildContextForAgent("agent-b", {
+  round: 2,
+  phase: "day-discuss",
+  alive: ["agent-b", "agent-c"],
+  privateNotesByAgent: privateNotes,
+});
+assert.deepEqual(villagerContext.private_notes, []);
+assert.deepEqual(villagerContext.eliminated, []);
+assert.deepEqual(villagerContext.public_events, []);
+
+// public_log slicing keeps at most last 20 rows
+const longLog = Array.from({ length: 25 }, (_, idx) => ({
+  round: 1,
+  agent_id: "agent-b",
+  action: "speak",
+  target: "",
+  public_text: `msg-${idx}`,
+}));
+const sliced = buildContextForAgent("agent-b", { round: 2, phase: "day-discuss", publicLog: longLog });
+assert.equal(sliced.public_log.length, 20);
+assert.equal(sliced.public_log[0].text, "msg-5");
 
 console.log("ok - lab web action mapping");
