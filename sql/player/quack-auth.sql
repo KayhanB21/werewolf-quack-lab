@@ -17,19 +17,36 @@ CREATE MACRO lab_check_token(sid, client_token, server_token) AS (
   ))) = string_split(client_token, '.')[2]
   AND CAST(
     json_extract_string(
-      CAST(from_base64(string_split(client_token, '.')[1]) AS VARCHAR),
+      decode(from_base64(string_split(client_token, '.')[1])),
       '$.exp'
     ) AS BIGINT
   ) > epoch(now())
 );
 
+CREATE TABLE quack_scopes (
+  scope_name VARCHAR PRIMARY KEY,
+  allowed_identifiers VARCHAR[]
+);
+
+-- Scope-aware authorization. Each federated query carries a leading
+-- "/* scope: <name> */" comment minted by the gateway. The macro looks up the
+-- scope and grants only if every public identifier the query references is in
+-- the scope's allowed_identifiers list. Private tables are always denied.
 CREATE MACRO lab_authorize(sid, query) AS (
-  regexp_matches(upper(trim(query)), '^(SELECT|FROM|WITH|EXPLAIN|DESCRIBE|SHOW)\b')
-  AND (
-    regexp_matches(lower(query), '\b(public_intents|wolf_channel|seer_channel|doctor_channel|post_game_intents)\b')
-    OR regexp_matches(lower(query), 'whoami\(\)')
+  regexp_matches(upper(regexp_replace(trim(query), '^/\*[^*]*\*/\s*', '', 'g')), '^(SELECT|FROM|WITH|EXPLAIN|DESCRIBE|SHOW)\b')
+  AND NOT regexp_matches(lower(query), '\b(self|intents|knowledge|suspicions|votes|game_flags|lab_secret|quack_scopes)\b')
+  AND EXISTS (
+    SELECT 1
+    FROM quack_scopes s
+    WHERE s.scope_name = regexp_extract(query, 'scope:\s*([a-z_]+)', 1)
+      AND list_has_all(
+        s.allowed_identifiers,
+        list_filter(
+          ['public_intents', 'wolf_channel', 'seer_channel', 'doctor_channel', 'post_game_intents', 'whoami'],
+          v -> regexp_matches(lower(query), '\b' || v || '\b')
+        )
+      )
   )
-  AND NOT regexp_matches(lower(query), '\b(self|intents|knowledge|suspicions|votes|game_flags|lab_secret)\b')
 );
 
 SET GLOBAL quack_authentication_function = 'lab_check_token';

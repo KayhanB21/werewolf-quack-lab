@@ -14,34 +14,35 @@ mkdir -p "${DATA_DIR}"
 
 mapfile -t PLAYER_HOSTS < <(jq -r '.[].id' <<<"${PLAYERS_JSON}")
 TOKEN="$(LAB_QUACK_SECRET="${LAB_QUACK_SECRET}" /app/bin/mint-token.sh "${QUERY_NAME}" 60 gateway)"
+SCOPE_TAG="/* scope: ${QUERY_NAME} */ "
 
 case "${QUERY_NAME}" in
   whoami)
-    REMOTE_SQL="SELECT name, provider, hostname, region, CAST(uptime AS VARCHAR) AS uptime, CAST(ts_now AS VARCHAR) AS ts_now, meta FROM whoami()"
+    REMOTE_SQL="${SCOPE_TAG}SELECT name, provider, hostname, region, CAST(uptime AS VARCHAR) AS uptime, CAST(ts_now AS VARCHAR) AS ts_now, meta FROM whoami()"
     FINAL_SQL="SELECT * FROM tmp_federated ORDER BY name;"
     ;;
   public_log)
-    REMOTE_SQL="SELECT round, agent_id, action, target, public_text, CAST(decided_at AS VARCHAR) AS decided_at FROM public_intents"
+    REMOTE_SQL="${SCOPE_TAG}SELECT round, agent_id, action, target, public_text, CAST(decided_at AS VARCHAR) AS decided_at FROM public_intents"
     FINAL_SQL="SELECT * FROM tmp_federated ORDER BY round, decided_at, agent_id;"
     ;;
   wolf_channel)
-    REMOTE_SQL="SELECT round, agent_id, action, target, rationale, CAST(decided_at AS VARCHAR) AS decided_at FROM wolf_channel"
+    REMOTE_SQL="${SCOPE_TAG}SELECT round, agent_id, action, target, rationale, CAST(decided_at AS VARCHAR) AS decided_at FROM wolf_channel"
     FINAL_SQL="SELECT * FROM tmp_federated ORDER BY round, decided_at, agent_id;"
     ;;
   seer_channel)
-    REMOTE_SQL="SELECT round, agent_id, action, target, rationale, CAST(decided_at AS VARCHAR) AS decided_at FROM seer_channel"
+    REMOTE_SQL="${SCOPE_TAG}SELECT round, agent_id, action, target, rationale, CAST(decided_at AS VARCHAR) AS decided_at FROM seer_channel"
     FINAL_SQL="SELECT * FROM tmp_federated ORDER BY round, decided_at, agent_id;"
     ;;
   doctor_channel)
-    REMOTE_SQL="SELECT round, agent_id, action, target, rationale, CAST(decided_at AS VARCHAR) AS decided_at FROM doctor_channel"
+    REMOTE_SQL="${SCOPE_TAG}SELECT round, agent_id, action, target, rationale, CAST(decided_at AS VARCHAR) AS decided_at FROM doctor_channel"
     FINAL_SQL="SELECT * FROM tmp_federated ORDER BY round, decided_at, agent_id;"
     ;;
   full_log)
-    REMOTE_SQL="SELECT round, agent_id, action, target, public_text, rationale, CAST(decided_at AS VARCHAR) AS decided_at FROM post_game_intents"
+    REMOTE_SQL="${SCOPE_TAG}SELECT round, agent_id, action, target, public_text, rationale, CAST(decided_at AS VARCHAR) AS decided_at FROM post_game_intents"
     FINAL_SQL="SELECT * FROM tmp_federated ORDER BY round, decided_at, agent_id;"
     ;;
   denied_private_table)
-    REMOTE_SQL="SELECT round, agent_id, action, target, rationale FROM intents"
+    REMOTE_SQL="/* scope: denied */ SELECT round, agent_id, action, target, rationale FROM intents"
     FINAL_SQL="SELECT * FROM tmp_federated;"
     ;;
   *)

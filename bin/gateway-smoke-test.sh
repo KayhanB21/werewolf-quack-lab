@@ -30,8 +30,9 @@ escape_sql_string() {
 federate_json() {
   local remote_sql="$1"
   local scope="${2:-smoke}"
+  local scoped_sql="/* scope: ${scope} */ ${remote_sql}"
   local escaped_remote_sql
-  escaped_remote_sql="$(escape_sql_string "${remote_sql}")"
+  escaped_remote_sql="$(escape_sql_string "${scoped_sql}")"
   local token
   token="$(mint_token "${scope}")"
   local union_sql=""
@@ -90,7 +91,7 @@ set +e
 denied_output="$(
   first_host="${PLAYER_HOSTS[0]}"
   token="$(mint_token denied)"
-  duck_json "SELECT * FROM quack_query('quack:${first_host}:9494', 'SELECT round, agent_id, rationale FROM intents', token => '${token}', disable_ssl => true);" 2>&1
+  duck_json "SELECT * FROM quack_query('quack:${first_host}:9494', '/* scope: denied */ SELECT round, agent_id, rationale FROM intents', token => '${token}', disable_ssl => true);" 2>&1
 )"
 denied_status="$?"
 set -e
