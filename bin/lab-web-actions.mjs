@@ -227,6 +227,32 @@ function normalizePlayers(value) {
   return normalized;
 }
 
+export function chooseTarget(rows) {
+  const counts = new Map();
+  for (const row of rows) {
+    if (!row || !row.target) continue;
+    counts.set(row.target, (counts.get(row.target) || 0) + 1);
+  }
+  const ranked = [...counts.entries()].sort((left, right) => {
+    if (right[1] !== left[1]) return right[1] - left[1];
+    return left[0].localeCompare(right[0]);
+  });
+  if (ranked.length === 0) return null;
+  return { target: ranked[0][0], votes: ranked[0][1] };
+}
+
+export function resolveNightOutcome(wolfRows, doctorRows) {
+  const wolfTarget = chooseTarget(wolfRows);
+  if (!wolfTarget) {
+    return { outcome: "no-kill", target: null, votes: 0 };
+  }
+  const saves = new Set((doctorRows || []).map((row) => row && row.target).filter(Boolean));
+  if (saves.has(wolfTarget.target)) {
+    return { outcome: "saved", target: wolfTarget.target, votes: wolfTarget.votes };
+  }
+  return { outcome: "kill", target: wolfTarget.target, votes: wolfTarget.votes };
+}
+
 function agentId(index) {
   const alphabet = "abcdefghijklmnopqrstuvwxyz";
   if (index < alphabet.length) return `agent-${alphabet[index]}`;

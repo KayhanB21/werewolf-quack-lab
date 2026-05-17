@@ -120,4 +120,103 @@ if ! grep -Fq "'agent-b'" "${model_prose_sql}"; then
   exit 1
 fi
 
+seer_sql="${TMP_DIR}/seer.sql"
+run_action "seer" "seer" "" "${seer_sql}"
+
+if ! grep -Fq "'seer-investigate', 'agent-b'" "${seer_sql}"; then
+  echo "seer stub action should investigate agent-b as the first non-self alive player" >&2
+  cat "${seer_sql}" >&2
+  exit 1
+fi
+
+if grep -Fq "'seer-investigate', 'agent-a'" "${seer_sql}"; then
+  echo "seer stub action must not investigate self" >&2
+  exit 1
+fi
+
+seer_wrong_role_sql="${TMP_DIR}/seer-wrong-role.sql"
+mkfifo "${seer_wrong_role_sql}.fifo"
+cat "${seer_wrong_role_sql}.fifo" > "${seer_wrong_role_sql}" &
+seer_reader_pid="$!"
+env \
+  NODE_ID="agent-a" \
+  ROLE="villager" \
+  PARTNERS="" \
+  PLAYER_IDS="agent-a,agent-b,agent-d" \
+  LLM_PROVIDER="stub" \
+  ACTION_PIPE="${seer_wrong_role_sql}.fifo" \
+  "${ROOT_DIR}/bin/agent-act.sh" --phase "seer" --round 2 >/dev/null &
+agent_pid="$!"
+sleep 0.5
+if kill -0 "${agent_pid}" 2>/dev/null; then
+  echo "non-seer seer phase should exit immediately without writing to the pipe" >&2
+  kill "${agent_pid}" "${seer_reader_pid}" 2>/dev/null || true
+  exit 1
+fi
+wait "${agent_pid}" || true
+kill "${seer_reader_pid}" 2>/dev/null || true
+wait "${seer_reader_pid}" 2>/dev/null || true
+
+if [[ -s "${seer_wrong_role_sql}" ]]; then
+  echo "non-seer seer phase should not write any SQL" >&2
+  exit 1
+fi
+
+doctor_sql="${TMP_DIR}/doctor.sql"
+run_action "doctor" "doctor" "" "${doctor_sql}"
+
+if ! grep -Fq "'doctor-save', 'agent-a'" "${doctor_sql}"; then
+  echo "doctor stub action should default to self-save (target=agent-a)" >&2
+  cat "${doctor_sql}" >&2
+  exit 1
+fi
+
+model_doctor_sql="${TMP_DIR}/model-doctor.sql"
+run_action \
+  "doctor" \
+  "doctor" \
+  "" \
+  "${model_doctor_sql}" \
+  "openai-compatible" \
+  '{"action":"doctor-save","target":"agent-b","public_text":"I will save agent-b tonight.","rationale":"Doctor thinks agent-b is at risk."}' \
+  "${fake_bin}:${PATH}"
+
+if ! grep -Fq "'doctor-save', 'agent-b'" "${model_doctor_sql}"; then
+  echo "model doctor action should save agent-b" >&2
+  cat "${model_doctor_sql}" >&2
+  exit 1
+fi
+
+if grep -Fq "I will save agent-b tonight." "${model_doctor_sql}"; then
+  echo "doctor action must not leak public_text" >&2
+  exit 1
+fi
+
+model_seer_sql="${TMP_DIR}/model-seer.sql"
+run_action \
+  "seer" \
+  "seer" \
+  "" \
+  "${model_seer_sql}" \
+  "openai-compatible" \
+  '{"action":"seer-investigate","target":"agent-a","public_text":"I will check myself.","rationale":"Confused seer wants to self-check."}' \
+  "${fake_bin}:${PATH}"
+
+if ! grep -Fq "'seer-investigate'" "${model_seer_sql}"; then
+  echo "model seer action should produce a seer-investigate intent" >&2
+  cat "${model_seer_sql}" >&2
+  exit 1
+fi
+
+if grep -Fq "'seer-investigate', 'agent-a'" "${model_seer_sql}"; then
+  echo "model seer action must reject self-investigation" >&2
+  cat "${model_seer_sql}" >&2
+  exit 1
+fi
+
+if grep -Fq "I will check myself" "${model_seer_sql}"; then
+  echo "seer action must not leak public_text" >&2
+  exit 1
+fi
+
 echo "ok - agent action writer emits local DuckDB intents"

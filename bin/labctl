@@ -19,9 +19,14 @@ Commands:
   down            Stop the generated lab and remove volumes
   run-agent <id> <phase>
                   Ask one player container to take one action
+                  phase is one of: day, vote, wolf, seer, doctor
   run-day         Ask every player container to take one day action
   run-wolf        Ask every wolf container to take one wolf action
   query <name>    Run a gateway query
+  ref-knowledge <id> <round> <source> <content>
+                  Referee writes a knowledge row into one player's private DB
+  ref-reveal <id> <round> <text>
+                  Referee writes a public role-reveal row into one player's DB
   smoke           Generate, start, run agent actions, and verify Quack behavior
   config          Render the merged Docker Compose config
 
@@ -78,7 +83,7 @@ run_one_agent_action() {
   fi
 
   case "${phase}" in
-    day|vote|wolf) ;;
+    day|vote|wolf|seer|doctor) ;;
     *)
       echo "unknown phase: ${phase}" >&2
       exit 2
@@ -92,6 +97,46 @@ run_one_agent_action() {
   echo "[labctl] ${id} acts in ${phase}"
   compose exec -T -e "PLAYER_IDS=${active_player_ids}" "${id}" \
     /app/bin/agent-act.sh --phase "${phase}" --round "${ROUND}" < /dev/null
+}
+
+sql_quote() {
+  local value="${1//\'/\'\'}"
+  printf "'%s'" "${value}"
+}
+
+ref_write_sql() {
+  local id="$1"
+  local sql="$2"
+  ensure_generated
+  if ! player_exists "${id}"; then
+    echo "unknown player: ${id}" >&2
+    exit 2
+  fi
+  compose exec -T "${id}" bash -lc "cat > /tmp/${id}-duckdb.fifo" <<<"${sql}"
+}
+
+ref_knowledge() {
+  local id="${1:?ref-knowledge requires a player id}"
+  local round="${2:?ref-knowledge requires a round}"
+  local source="${3:?ref-knowledge requires a source}"
+  local content="${4:?ref-knowledge requires content}"
+  local source_sql content_sql id_sql
+  source_sql="$(sql_quote "${source}")"
+  content_sql="$(sql_quote "${content}")"
+  id_sql="$(sql_quote "${id}")"
+  ref_write_sql "${id}" "INSERT INTO knowledge (round, agent_id, source, content, confidence, created_at) VALUES (${round}, ${id_sql}, ${source_sql}, ${content_sql}, 1.0, now());"
+  echo "[labctl] wrote knowledge row for ${id}"
+}
+
+ref_reveal() {
+  local id="${1:?ref-reveal requires a player id}"
+  local round="${2:?ref-reveal requires a round}"
+  local text="${3:?ref-reveal requires public text}"
+  local id_sql text_sql
+  id_sql="$(sql_quote "${id}")"
+  text_sql="$(sql_quote "${text}")"
+  ref_write_sql "${id}" "INSERT INTO intents (round, agent_id, action, target, rationale, public_text, decided_at) VALUES (${round}, ${id_sql}, 'role-reveal', NULL, NULL, ${text_sql}, now());"
+  echo "[labctl] wrote role-reveal row for ${id}"
 }
 
 case "${1:-}" in
@@ -119,6 +164,12 @@ case "${1:-}" in
     ensure_generated
     query_name="${2:-public_log}"
     compose exec gateway /app/bin/gateway-query.sh "${query_name}"
+    ;;
+  ref-knowledge)
+    ref_knowledge "${2:-}" "${3:-}" "${4:-}" "${5:-}"
+    ;;
+  ref-reveal)
+    ref_reveal "${2:-}" "${3:-}" "${4:-}"
     ;;
   smoke)
     ./bin/generate-compose.sh --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}"

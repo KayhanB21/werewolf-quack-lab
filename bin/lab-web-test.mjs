@@ -4,8 +4,10 @@ import { readFileSync } from "node:fs";
 import {
   buildGameConfig,
   buildLabEnv,
+  chooseTarget,
   getActionPlan,
   listActions,
+  resolveNightOutcome,
   toHostModelUrl,
 } from "./lab-web-actions.mjs";
 import { extractJsonArrays, summarizeStep } from "../web/flow.mjs";
@@ -147,6 +149,36 @@ const wolfSummary = summarizeStep(
 assert.equal(wolfSummary.title, "Round 1 Wolf Channel");
 assert.equal(wolfSummary.rows[0].target, "agent-b");
 
+const doctorSummary = summarizeStep(
+  "referee round 1 doctor log",
+  `[gateway] running doctor_channel\n[{"round":1,"agent_id":"agent-e","action":"doctor-save","target":"agent-b","rationale":"protect b"}]\n`,
+);
+assert.equal(doctorSummary.title, "Round 1 Doctor Channel");
+assert.equal(doctorSummary.rows[0].target, "agent-b");
+assert.equal(doctorSummary.rows[0].agent, "agent-e");
+
+const seerSummary = summarizeStep(
+  "referee round 1 seer log",
+  `[gateway] running seer_channel\n[{"round":1,"agent_id":"agent-c","action":"seer-investigate","target":"agent-a","rationale":"check a"}]\n`,
+);
+assert.equal(seerSummary.title, "Round 1 Seer Channel");
+assert.equal(seerSummary.rows[0].target, "agent-a");
+assert.equal(seerSummary.rows[0].agent, "agent-c");
+
+const doctorPhaseSummary = summarizeStep(
+  "referee round 2 doctor",
+  "[agent-e] wrote doctor-save for phase=doctor\n",
+);
+assert.equal(doctorPhaseSummary.title, "Round 2 Doctor Action");
+assert.equal(doctorPhaseSummary.rows[0].action, "doctor-save");
+
+const seerPhaseSummary = summarizeStep(
+  "referee round 2 seer",
+  "[agent-c] wrote seer-investigate for phase=seer\n",
+);
+assert.equal(seerPhaseSummary.title, "Round 2 Seer Action");
+assert.equal(seerPhaseSummary.rows[0].action, "seer-investigate");
+
 const fullLogSummary = summarizeStep(
   "./bin/labctl query full_log",
   `[{"round":1,"agent_id":"agent-a","action":"vote","target":"agent-b","public_text":"agent-a votes agent-b","rationale":"private note"}]\n`,
@@ -168,5 +200,42 @@ const deniedSummary = summarizeStep(
 );
 assert.equal(deniedSummary.status, "done");
 assert.equal(extractJsonArrays("[gateway]\n[]\n[{\"agent_id\":\"agent-a\"}]").length, 2);
+
+assert.equal(chooseTarget([]), null);
+assert.deepEqual(chooseTarget([{ target: "agent-b" }, { target: "agent-b" }, { target: "agent-c" }]), {
+  target: "agent-b",
+  votes: 2,
+});
+// alphabetic tiebreak so ties are deterministic for the referee
+assert.deepEqual(chooseTarget([{ target: "agent-c" }, { target: "agent-b" }]), {
+  target: "agent-b",
+  votes: 1,
+});
+
+assert.deepEqual(resolveNightOutcome([], []), { outcome: "no-kill", target: null, votes: 0 });
+assert.deepEqual(
+  resolveNightOutcome([{ target: "agent-b" }], []),
+  { outcome: "kill", target: "agent-b", votes: 1 },
+);
+assert.deepEqual(
+  resolveNightOutcome([{ target: "agent-b" }], [{ target: "agent-b" }]),
+  { outcome: "saved", target: "agent-b", votes: 1 },
+);
+assert.deepEqual(
+  resolveNightOutcome(
+    [{ target: "agent-b" }, { target: "agent-b" }, { target: "agent-c" }],
+    [{ target: "agent-c" }],
+  ),
+  { outcome: "kill", target: "agent-b", votes: 2 },
+  "doctor save on a non-targeted player must not block the kill",
+);
+assert.deepEqual(
+  resolveNightOutcome(
+    [{ target: "agent-b" }],
+    [{ target: "agent-e" }, { target: "agent-b" }],
+  ),
+  { outcome: "saved", target: "agent-b", votes: 1 },
+  "multiple doctor proposals: any matching save cancels the kill",
+);
 
 console.log("ok - lab web action mapping");

@@ -114,8 +114,20 @@ WHERE public_text IS NOT NULL;
 CREATE OR REPLACE VIEW wolf_channel AS
 SELECT round, agent_id, action, target, rationale, decided_at
 FROM intents
-WHERE action = 'wolf-kill'
+WHERE action IN ('wolf-kill', 'wolf-done')
   AND (SELECT role FROM self LIMIT 1) = 'wolf';
+
+CREATE OR REPLACE VIEW seer_channel AS
+SELECT round, agent_id, action, target, rationale, decided_at
+FROM intents
+WHERE action = 'seer-investigate'
+  AND (SELECT role FROM self LIMIT 1) = 'seer';
+
+CREATE OR REPLACE VIEW doctor_channel AS
+SELECT round, agent_id, action, target, rationale, decided_at
+FROM intents
+WHERE action = 'doctor-save'
+  AND (SELECT role FROM self LIMIT 1) = 'doctor';
 
 CREATE OR REPLACE VIEW post_game_intents AS
 SELECT round, agent_id, action, target, public_text, rationale, decided_at
@@ -129,7 +141,7 @@ CREATE OR REPLACE MACRO lab_check_token(sid, client_token, server_token) AS (
 CREATE OR REPLACE MACRO lab_authorize(sid, query) AS (
   regexp_matches(upper(trim(query)), '^(SELECT|FROM|WITH|EXPLAIN|DESCRIBE|SHOW)\b')
   AND (
-    regexp_matches(lower(query), '\b(public_intents|wolf_channel|post_game_intents)\b')
+    regexp_matches(lower(query), '\b(public_intents|wolf_channel|seer_channel|doctor_channel|post_game_intents)\b')
     OR regexp_matches(lower(query), 'whoami\(\)')
   )
   AND NOT regexp_matches(lower(query), '\b(self|intents|knowledge|suspicions|votes|game_flags|quack_tokens)\b')

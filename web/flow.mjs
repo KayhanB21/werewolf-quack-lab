@@ -1,25 +1,35 @@
 export function classifyCommand(command) {
-  const roundPhase = command.match(/^referee round ([0-9]+) (discussion|voting|wolf)$/);
+  const roundPhase = command.match(/^referee round ([0-9]+) (discussion|voting|wolf|doctor|seer)$/);
   if (roundPhase) {
     const [, round, phase] = roundPhase;
     const titles = {
       discussion: `Round ${round} Discussion`,
       voting: `Round ${round} Voting`,
       wolf: `Round ${round} Wolf Action`,
+      doctor: `Round ${round} Doctor Action`,
+      seer: `Round ${round} Seer Action`,
     };
     const subjects = {
       discussion: "Public talk",
       voting: "Public decision",
       wolf: "Private wolves",
+      doctor: "Private doctor",
+      seer: "Private seer",
     };
     return { kind: "actions", title: titles[phase], subject: subjects[phase] };
   }
 
-  const roundLog = command.match(/^referee round ([0-9]+) (discussion log|vote log|wolf log)$/);
+  const roundLog = command.match(/^referee round ([0-9]+) (discussion log|vote log|wolf log|doctor log|seer log)$/);
   if (roundLog) {
     const [, round, logKind] = roundLog;
     if (logKind === "wolf log") {
       return { kind: "wolfChannel", title: `Round ${round} Wolf Channel`, subject: "Row-filtered view" };
+    }
+    if (logKind === "doctor log") {
+      return { kind: "doctorChannel", title: `Round ${round} Doctor Channel`, subject: "Row-filtered view" };
+    }
+    if (logKind === "seer log") {
+      return { kind: "seerChannel", title: `Round ${round} Seer Channel`, subject: "Row-filtered view" };
     }
     return {
       kind: "publicLog",
@@ -152,7 +162,21 @@ export function summarizeStep(command, raw, exitCode = 0) {
   }
 
   if (meta.kind === "wolfChannel") {
-    summary.rows = pickArray(raw, (row) => row.action === "wolf-kill" || row.rationale).map(
+    summary.rows = pickArray(
+      raw,
+      (row) => row.action === "wolf-kill" || row.action === "wolf-done" || row.rationale,
+    ).map((row) => ({
+      round: String(row.round || ""),
+      agent: row.agent_id,
+      target: row.target || "",
+      rationale: row.rationale || "",
+    }));
+    summary.metrics.push({ label: "wolf rows", value: String(summary.rows.length) });
+    return summary;
+  }
+
+  if (meta.kind === "doctorChannel") {
+    summary.rows = pickArray(raw, (row) => row.action === "doctor-save" || row.rationale).map(
       (row) => ({
         round: String(row.round || ""),
         agent: row.agent_id,
@@ -160,7 +184,20 @@ export function summarizeStep(command, raw, exitCode = 0) {
         rationale: row.rationale || "",
       }),
     );
-    summary.metrics.push({ label: "wolf rows", value: String(summary.rows.length) });
+    summary.metrics.push({ label: "doctor rows", value: String(summary.rows.length) });
+    return summary;
+  }
+
+  if (meta.kind === "seerChannel") {
+    summary.rows = pickArray(raw, (row) => row.action === "seer-investigate" || row.rationale).map(
+      (row) => ({
+        round: String(row.round || ""),
+        agent: row.agent_id,
+        target: row.target || "",
+        rationale: row.rationale || "",
+      }),
+    );
+    summary.metrics.push({ label: "seer rows", value: String(summary.rows.length) });
     return summary;
   }
 

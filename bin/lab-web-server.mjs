@@ -8,8 +8,10 @@ import { fileURLToPath } from "node:url";
 import {
   buildGameConfig,
   buildLabEnv,
+  chooseTarget,
   getActionPlan,
   listActions,
+  resolveNightOutcome,
   toHostModelUrl,
 } from "./lab-web-actions.mjs";
 import { extractJsonArrays } from "../web/flow.mjs";
@@ -392,24 +394,115 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
     );
     if (wolfLog.code !== 0) return false;
 
-    const wolfVotes = wolfLog.rows;
-    const wolfTarget = chooseTarget(wolfVotes);
-    if (wolfTarget) {
-      alive = alive.filter((id) => id !== wolfTarget.target);
-      eliminated.push({ id: wolfTarget.target, round, phase: "wolf" });
+    const liveDoctors = alive.filter((id) => roles.get(id) === "doctor");
+    const doctorOk = await runAgentPhase(
+      `referee round ${round} doctor`,
+      liveDoctors,
+      "doctor",
+      { ...roundEnv, ACTIVE_PLAYER_IDS: alive.join(",") },
+      res,
+      shouldAbort,
+      isClosed,
+    );
+    if (!doctorOk) return false;
+
+    const doctorLog = await runFilteredQuery(
+      `referee round ${round} doctor log`,
+      "doctor_channel",
+      roundEnv,
+      res,
+      (row) =>
+        Number(row.round) === round &&
+        row.action === "doctor-save" &&
+        alive.includes(row.agent_id) &&
+        alive.includes(row.target),
+    );
+    if (doctorLog.code !== 0) return false;
+
+    const liveSeers = alive.filter((id) => roles.get(id) === "seer");
+    const seerOk = await runAgentPhase(
+      `referee round ${round} seer`,
+      liveSeers,
+      "seer",
+      { ...roundEnv, ACTIVE_PLAYER_IDS: alive.join(",") },
+      res,
+      shouldAbort,
+      isClosed,
+    );
+    if (!seerOk) return false;
+
+    const seerLog = await runFilteredQuery(
+      `referee round ${round} seer log`,
+      "seer_channel",
+      roundEnv,
+      res,
+      (row) =>
+        Number(row.round) === round &&
+        row.action === "seer-investigate" &&
+        alive.includes(row.agent_id) &&
+        alive.includes(row.target),
+    );
+    if (seerLog.code !== 0) return false;
+
+    const night = resolveNightOutcome(wolfLog.rows, doctorLog.rows);
+    if (night.outcome === "kill") {
+      alive = alive.filter((id) => id !== night.target);
+      eliminated.push({ id: night.target, round, phase: "wolf" });
       history.push({
         round,
         phase: "wolf",
         event: "kill",
-        target: wolfTarget.target,
-        votes: wolfTarget.votes,
+        target: night.target,
+        votes: night.votes,
       });
       writeEvent(res, "stdout", {
-        data: `[referee] night ${round}: ${wolfTarget.target} killed by wolves\n`,
+        data: `[referee] night ${round}: ${night.target} killed by wolves\n`,
+      });
+    } else if (night.outcome === "saved") {
+      history.push({
+        round,
+        phase: "wolf",
+        event: "saved",
+        target: night.target,
+        votes: night.votes,
+      });
+      writeEvent(res, "stdout", {
+        data: `[referee] night ${round}: ${night.target} was attacked but saved by the doctor\n`,
       });
     } else {
       history.push({ round, phase: "wolf", event: "no-kill" });
       writeEvent(res, "stdout", { data: `[referee] night ${round}: no kill\n` });
+    }
+
+    for (const seer of liveSeers) {
+      const proposals = seerLog.rows.filter((row) => row.agent_id === seer);
+      const proposal = proposals[proposals.length - 1];
+      if (!proposal || !proposal.target) continue;
+      const targetRole = roles.get(proposal.target);
+      if (!targetRole) continue;
+      const content = `Round ${round}: ${proposal.target} is ${targetRole}.`;
+      const writeResult = await runBufferedStep(
+        "./bin/labctl",
+        ["ref-knowledge", seer, String(round), "seer", content],
+        roundEnv,
+      );
+      if (writeResult.code !== 0) {
+        writeEvent(res, "stderr", {
+          data: `[referee] failed to write seer knowledge for ${seer}: ${writeResult.stderr}\n`,
+        });
+      } else {
+        history.push({
+          round,
+          phase: "seer",
+          event: "investigate",
+          agent: seer,
+          target: proposal.target,
+          result: targetRole,
+        });
+        writeEvent(res, "stdout", {
+          data: `[referee] night ${round}: seer ${seer} learns ${proposal.target} is ${targetRole}\n`,
+        });
+      }
     }
 
     const wolfWin = winnerFor(alive, roles);
@@ -491,7 +584,14 @@ async function handleExport(req, res) {
   }
 
   const env = buildLabEnv(body, process.env, { requireModel: false });
-  const queryNames = ["whoami", "public_log", "wolf_channel", "full_log"];
+  const queryNames = [
+    "whoami",
+    "public_log",
+    "wolf_channel",
+    "seer_channel",
+    "doctor_channel",
+    "full_log",
+  ];
   const results = {};
   const errors = [];
 
@@ -520,6 +620,8 @@ async function handleExport(req, res) {
     nodes: results.whoami,
     public_log: results.public_log,
     wolf_channel: results.wolf_channel,
+    seer_channel: results.seer_channel,
+    doctor_channel: results.doctor_channel,
     audit_log: results.full_log,
     export_errors: errors,
   };
@@ -574,25 +676,13 @@ function pickRows(raw, queryName) {
   const predicates = {
     whoami: (row) => row.name,
     public_log: (row) => row.public_text,
-    wolf_channel: (row) => row.action === "wolf-kill" || row.rationale,
+    wolf_channel: (row) => row.action === "wolf-kill" || row.action === "wolf-done" || row.rationale,
+    seer_channel: (row) => row.action === "seer-investigate" || row.rationale,
+    doctor_channel: (row) => row.action === "doctor-save" || row.rationale,
     full_log: (row) => row.public_text || row.rationale,
   };
   const predicate = predicates[queryName] || (() => true);
   return arrays.find((rows) => rows.some((row) => row && typeof row === "object" && predicate(row))) || [];
-}
-
-function chooseTarget(rows) {
-  const counts = new Map();
-  for (const row of rows) {
-    if (!row.target) continue;
-    counts.set(row.target, (counts.get(row.target) || 0) + 1);
-  }
-  const ranked = [...counts.entries()].sort((left, right) => {
-    if (right[1] !== left[1]) return right[1] - left[1];
-    return left[0].localeCompare(right[0]);
-  });
-  if (ranked.length === 0) return null;
-  return { target: ranked[0][0], votes: ranked[0][1] };
 }
 
 function winnerFor(alive, roles) {

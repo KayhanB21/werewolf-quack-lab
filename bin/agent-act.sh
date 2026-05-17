@@ -48,10 +48,15 @@ contains_csv() {
 }
 
 pick_target() {
+  local allow_self="false"
+  [[ "${PHASE}" == "doctor" ]] && allow_self="true"
   IFS="," read -r -a ids <<< "${PLAYER_IDS}"
   for id in "${ids[@]}"; do
     id="${id// /}"
-    [[ -z "${id}" || "${id}" == "${NODE_ID}" ]] && continue
+    [[ -z "${id}" ]] && continue
+    if [[ "${allow_self}" != "true" && "${id}" == "${NODE_ID}" ]]; then
+      continue
+    fi
     if [[ "${ROLE}" == "wolf" ]] && contains_csv "${id}" "${PARTNERS}"; then
       continue
     fi
@@ -63,8 +68,11 @@ pick_target() {
 
 target_is_valid() {
   local candidate="$1"
-  [[ -n "${candidate}" && "${candidate}" != "${NODE_ID}" ]] || return 1
+  [[ -n "${candidate}" ]] || return 1
   contains_csv "${candidate}" "${PLAYER_IDS}" || return 1
+  if [[ "${PHASE}" != "doctor" && "${candidate}" == "${NODE_ID}" ]]; then
+    return 1
+  fi
   if [[ "${PHASE}" == "wolf" && "${ROLE}" == "wolf" ]] && contains_csv "${candidate}" "${PARTNERS}"; then
     return 1
   fi
@@ -125,6 +133,30 @@ stub_turn_json() {
         --arg rationale "Stub wolf ${NODE_ID} proposes ${target}; partners=${PARTNERS:-none}." \
         '{action: $action, target: $target, public_text: $public_text, rationale: $rationale}'
       ;;
+    seer)
+      if [[ "${ROLE}" != "seer" ]]; then
+        jq -n --arg action "noop" '{action: $action, target: "", public_text: "", rationale: "not a seer"}'
+        return 0
+      fi
+      jq -n \
+        --arg action "seer-investigate" \
+        --arg target "${target}" \
+        --arg public_text "" \
+        --arg rationale "Stub seer ${NODE_ID} investigates ${target}." \
+        '{action: $action, target: $target, public_text: $public_text, rationale: $rationale}'
+      ;;
+    doctor)
+      if [[ "${ROLE}" != "doctor" ]]; then
+        jq -n --arg action "noop" '{action: $action, target: "", public_text: "", rationale: "not a doctor"}'
+        return 0
+      fi
+      jq -n \
+        --arg action "doctor-save" \
+        --arg target "${NODE_ID}" \
+        --arg public_text "" \
+        --arg rationale "Stub doctor ${NODE_ID} saves self." \
+        '{action: $action, target: $target, public_text: $public_text, rationale: $rationale}'
+      ;;
     vote)
       jq -n \
         --arg action "vote" \
@@ -173,6 +205,27 @@ text_turn_json() {
       fi
       action="wolf-kill"
       target="$(target_from_text "${content}")"
+      public_text=""
+      ;;
+    seer)
+      if [[ "${ROLE}" != "seer" ]]; then
+        jq -n --arg action "noop" '{action: $action, target: "", public_text: "", rationale: "not a seer"}'
+        return 0
+      fi
+      action="seer-investigate"
+      target="$(target_from_text "${content}")"
+      public_text=""
+      ;;
+    doctor)
+      if [[ "${ROLE}" != "doctor" ]]; then
+        jq -n --arg action "noop" '{action: $action, target: "", public_text: "", rationale: "not a doctor"}'
+        return 0
+      fi
+      action="doctor-save"
+      target="$(target_from_text "${content}")"
+      if [[ -z "${target}" || "${target}" == "${NODE_ID}" ]]; then
+        target="${NODE_ID}"
+      fi
       public_text=""
       ;;
     day)
@@ -252,7 +305,7 @@ openai_turn_json() {
         messages: [
           {
             role: "system",
-            content: "You are one Werewolf game agent. Return one JSON object only with action, target, public_text, and rationale. The word JSON is required. In day phase, this is public discussion only: use speak, accuse, or investigate, and do not vote. In vote phase, use vote. In wolf phase, use wolf-kill, choose a non-partner target, and keep public_text empty. Make public_text a short natural sentence from this agent."
+            content: "You are one Werewolf game agent. Return one JSON object only with action, target, public_text, and rationale. The word JSON is required. In day phase, this is public discussion only: use speak, accuse, or investigate, and do not vote. In vote phase, use vote. In wolf phase, use wolf-kill, choose a non-partner non-self alive target, and keep public_text empty. In seer phase, use seer-investigate, choose an alive non-self target, and keep public_text empty. In doctor phase, use doctor-save, choose any alive target including yourself, and keep public_text empty. Make public_text a short natural sentence from this agent only when the phase allows public speech."
           },
           {
             role: "user",
@@ -328,6 +381,32 @@ normalize_turn_json() {
       target="$(normalize_target "${raw_target}")"
       public_text=""
       rationale="${raw_rationale:-Wolf phase private action.}"
+      ;;
+    seer)
+      if [[ "${ROLE}" != "seer" ]]; then
+        jq -n --arg action "noop" '{action: $action, target: "", public_text: "", rationale: "not a seer"}'
+        return 0
+      fi
+
+      action="seer-investigate"
+      target="$(normalize_target "${raw_target}")"
+      public_text=""
+      rationale="${raw_rationale:-Seer phase private action.}"
+      ;;
+    doctor)
+      if [[ "${ROLE}" != "doctor" ]]; then
+        jq -n --arg action "noop" '{action: $action, target: "", public_text: "", rationale: "not a doctor"}'
+        return 0
+      fi
+
+      action="doctor-save"
+      if target_is_valid "${raw_target}"; then
+        target="${raw_target}"
+      else
+        target="${NODE_ID}"
+      fi
+      public_text=""
+      rationale="${raw_rationale:-Doctor phase private action.}"
       ;;
     vote)
       action="vote"

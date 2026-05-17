@@ -55,8 +55,20 @@ WHERE public_text IS NOT NULL;
 CREATE VIEW wolf_channel AS
 SELECT round, agent_id, action, target, rationale, decided_at
 FROM intents
-WHERE action = 'wolf-kill'
+WHERE action IN ('wolf-kill', 'wolf-done')
   AND (SELECT role FROM self LIMIT 1) = 'wolf';
+
+CREATE VIEW seer_channel AS
+SELECT round, agent_id, action, target, rationale, decided_at
+FROM intents
+WHERE action = 'seer-investigate'
+  AND (SELECT role FROM self LIMIT 1) = 'seer';
+
+CREATE VIEW doctor_channel AS
+SELECT round, agent_id, action, target, rationale, decided_at
+FROM intents
+WHERE action = 'doctor-save'
+  AND (SELECT role FROM self LIMIT 1) = 'doctor';
 
 CREATE VIEW post_game_intents AS
 SELECT round, agent_id, action, target, public_text, rationale, decided_at

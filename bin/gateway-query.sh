@@ -38,6 +38,14 @@ case "${QUERY_NAME}" in
     REMOTE_SQL="SELECT round, agent_id, action, target, rationale, CAST(decided_at AS VARCHAR) AS decided_at FROM wolf_channel"
     FINAL_SQL="SELECT * FROM tmp_federated ORDER BY round, decided_at, agent_id;"
     ;;
+  seer_channel)
+    REMOTE_SQL="SELECT round, agent_id, action, target, rationale, CAST(decided_at AS VARCHAR) AS decided_at FROM seer_channel"
+    FINAL_SQL="SELECT * FROM tmp_federated ORDER BY round, decided_at, agent_id;"
+    ;;
+  doctor_channel)
+    REMOTE_SQL="SELECT round, agent_id, action, target, rationale, CAST(decided_at AS VARCHAR) AS decided_at FROM doctor_channel"
+    FINAL_SQL="SELECT * FROM tmp_federated ORDER BY round, decided_at, agent_id;"
+    ;;
   full_log)
     REMOTE_SQL="SELECT round, agent_id, action, target, public_text, rationale, CAST(decided_at AS VARCHAR) AS decided_at FROM post_game_intents"
     FINAL_SQL="SELECT * FROM tmp_federated ORDER BY round, decided_at, agent_id;"
@@ -48,7 +56,7 @@ case "${QUERY_NAME}" in
     ;;
   *)
     echo "unknown query: ${QUERY_NAME}" >&2
-    echo "valid queries: whoami, public_log, wolf_channel, full_log, denied_private_table" >&2
+    echo "valid queries: whoami, public_log, wolf_channel, seer_channel, doctor_channel, full_log, denied_private_table" >&2
     exit 2
     ;;
 esac
