@@ -10,6 +10,7 @@ import {
   latestKillsPerWolf,
   latestRowPerAgent,
   listActions,
+  resolveLynch,
   resolveNightOutcome,
   toHostModelUrl,
 } from "./lab-web-actions.mjs";
@@ -335,5 +336,26 @@ const longLog = Array.from({ length: 25 }, (_, idx) => ({
 const sliced = buildContextForAgent("agent-b", { round: 2, phase: "day-discuss", publicLog: longLog });
 assert.equal(sliced.public_log.length, 20);
 assert.equal(sliced.public_log[0].text, "msg-5");
+
+assert.deepEqual(resolveLynch([]), { outcome: "abstain", target: null, votes: 0 });
+assert.deepEqual(
+  resolveLynch([{ target: "agent-b" }, { target: "agent-b" }, { target: "agent-c" }]),
+  { outcome: "lynch", target: "agent-b", votes: 2 },
+);
+assert.deepEqual(
+  resolveLynch([{ target: "agent-b" }, { target: "agent-c" }]),
+  { outcome: "abstain", target: null, votes: 1 },
+  "tied top vote must produce no lynch",
+);
+assert.deepEqual(
+  resolveLynch([{ target: "" }, { target: null }, { target: "agent-b" }]),
+  { outcome: "lynch", target: "agent-b", votes: 1 },
+  "abstain rows (empty/null target) must not be counted",
+);
+assert.deepEqual(
+  resolveLynch([{ target: "" }, { target: "" }, { target: "" }]),
+  { outcome: "abstain", target: null, votes: 0 },
+  "all-abstain returns abstain with zero votes",
+);
 
 console.log("ok - lab web action mapping");
