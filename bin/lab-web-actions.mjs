@@ -227,6 +227,43 @@ function normalizePlayers(value) {
   return normalized;
 }
 
+export function buildContextForAgent(id, opts) {
+  const {
+    round,
+    phase,
+    alive = [],
+    eliminated = [],
+    publicEvents = [],
+    publicLog = [],
+    privateNotesByAgent = null,
+  } = opts || {};
+  const notes =
+    privateNotesByAgent && typeof privateNotesByAgent.get === "function"
+      ? privateNotesByAgent.get(id) || []
+      : (opts?.privateNotes || []);
+  return {
+    round: Number(round) || 1,
+    phase: String(phase || ""),
+    you: id,
+    alive: alive.slice(),
+    eliminated: eliminated.map((entry) => ({
+      id: entry.id,
+      role: entry.role || "unknown",
+      round: entry.round ?? null,
+      cause: entry.cause || entry.phase || "eliminated",
+    })),
+    public_events: publicEvents.slice(-10),
+    public_log: publicLog.slice(-20).map((row) => ({
+      round: Number(row.round) || 0,
+      speaker: row.agent_id || row.speaker || "",
+      action: row.action || "",
+      target: row.target || "",
+      text: row.public_text || row.text || "",
+    })),
+    private_notes: notes.slice(-20),
+  };
+}
+
 export function chooseTarget(rows) {
   const counts = new Map();
   for (const row of rows) {
@@ -239,6 +276,39 @@ export function chooseTarget(rows) {
   });
   if (ranked.length === 0) return null;
   return { target: ranked[0][0], votes: ranked[0][1] };
+}
+
+export function latestRowPerAgent(rows) {
+  const latest = new Map();
+  for (const row of rows || []) {
+    if (!row || !row.agent_id) continue;
+    const existing = latest.get(row.agent_id);
+    if (!existing) {
+      latest.set(row.agent_id, row);
+      continue;
+    }
+    if (
+      typeof row.decided_at === "string" &&
+      typeof existing.decided_at === "string" &&
+      row.decided_at > existing.decided_at
+    ) {
+      latest.set(row.agent_id, row);
+    } else if (!existing.decided_at) {
+      latest.set(row.agent_id, row);
+    }
+  }
+  return latest;
+}
+
+export function latestKillsPerWolf(rows, liveWolves) {
+  const latest = latestRowPerAgent(rows);
+  const tally = [];
+  for (const wolfId of liveWolves || []) {
+    const row = latest.get(wolfId);
+    if (!row || !row.target) continue;
+    tally.push({ agent_id: wolfId, target: row.target, action: row.action });
+  }
+  return tally;
 }
 
 export function resolveNightOutcome(wolfRows, doctorRows) {

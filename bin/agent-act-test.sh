@@ -219,4 +219,20 @@ if grep -Fq "I will check myself" "${model_seer_sql}"; then
   exit 1
 fi
 
+model_wolf_done_sql="${TMP_DIR}/model-wolf-done.sql"
+run_action \
+  "wolf" \
+  "wolf" \
+  "agent-d" \
+  "${model_wolf_done_sql}" \
+  "openai-compatible" \
+  '{"action":"wolf-kill","target":"agent-b","public_text":"","rationale":"agreeing","done":true}' \
+  "${fake_bin}:${PATH}"
+
+if ! grep -Fq "'wolf-done', 'agent-b'" "${model_wolf_done_sql}"; then
+  echo "wolf turn with done=true should normalize to a wolf-done action" >&2
+  cat "${model_wolf_done_sql}" >&2
+  exit 1
+fi
+
 echo "ok - agent action writer emits local DuckDB intents"

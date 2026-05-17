@@ -95,7 +95,10 @@ run_one_agent_action() {
   fi
 
   echo "[labctl] ${id} acts in ${phase}"
-  compose exec -T -e "PLAYER_IDS=${active_player_ids}" "${id}" \
+  compose exec -T \
+    -e "PLAYER_IDS=${active_player_ids}" \
+    -e "WOLF_CHANNEL_JSON=${WOLF_CHANNEL_JSON:-[]}" \
+    "${id}" \
     /app/bin/agent-act.sh --phase "${phase}" --round "${ROUND}" < /dev/null
 }
 

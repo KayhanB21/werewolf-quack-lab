@@ -6,10 +6,13 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  buildContextForAgent,
   buildGameConfig,
   buildLabEnv,
   chooseTarget,
   getActionPlan,
+  latestKillsPerWolf,
+  latestRowPerAgent,
   listActions,
   resolveNightOutcome,
   toHostModelUrl,
@@ -269,10 +272,32 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
   const roles = new Map(players.map((player) => [player.id, player.role]));
   const history = [];
   const eliminated = [];
+  const publicLog = [];
+  const publicEvents = [];
+  const privateNotesByAgent = new Map(players.map((player) => [player.id, []]));
   let alive = players.map((player) => player.id);
   let winner = "";
   let reason = "";
   const maxRounds = clampInt(body.maxRounds, 8, 1, 20);
+
+  function envForId(phase, round, base, extra = {}) {
+    return (id) => ({
+      ...base,
+      ...extra,
+      ACTIVE_PLAYER_IDS: alive.join(","),
+      CONTEXT_JSON: JSON.stringify(
+        buildContextForAgent(id, {
+          round,
+          phase,
+          alive,
+          eliminated,
+          publicEvents,
+          publicLog,
+          privateNotesByAgent,
+        }),
+      ),
+    });
+  }
 
   for (const [command, args] of [
     ["./bin/labctl", ["down"]],
@@ -293,7 +318,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
       `referee round ${round} discussion`,
       alive,
       "day",
-      { ...roundEnv, ACTIVE_PLAYER_IDS: alive.join(",") },
+      envForId("day-discuss", round, roundEnv),
       res,
       shouldAbort,
       isClosed,
@@ -311,6 +336,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
         alive.includes(row.agent_id),
     );
     if (discussionLog.code !== 0) return false;
+    publicLog.push(...discussionLog.rows);
     history.push({
       round,
       phase: "discussion",
@@ -322,7 +348,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
       `referee round ${round} voting`,
       alive,
       "vote",
-      { ...roundEnv, ACTIVE_PLAYER_IDS: alive.join(",") },
+      envForId("day-vote", round, roundEnv),
       res,
       shouldAbort,
       isClosed,
@@ -341,12 +367,23 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
         alive.includes(row.target),
     );
     if (dayLog.code !== 0) return false;
+    publicLog.push(...dayLog.rows);
 
     const dayVotes = dayLog.rows;
     const dayTarget = chooseTarget(dayVotes);
     if (dayTarget) {
       alive = alive.filter((id) => id !== dayTarget.target);
-      eliminated.push({ id: dayTarget.target, round, phase: "day" });
+      const revealedRole = roles.get(dayTarget.target) || "unknown";
+      eliminated.push({
+        id: dayTarget.target,
+        role: revealedRole,
+        round,
+        phase: "day",
+        cause: "lynch",
+      });
+      publicEvents.push(
+        `Round ${round}: ${dayTarget.target} was lynched (${dayTarget.votes} vote(s)). Revealed role: ${revealedRole}.`,
+      );
       history.push({
         round,
         phase: "day",
@@ -355,10 +392,11 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
         votes: dayTarget.votes,
       });
       writeEvent(res, "stdout", {
-        data: `[referee] day ${round}: ${dayTarget.target} eliminated by ${dayTarget.votes} vote(s)\n`,
+        data: `[referee] day ${round}: ${dayTarget.target} eliminated by ${dayTarget.votes} vote(s); revealed role: ${revealedRole}\n`,
       });
     } else {
       history.push({ round, phase: "day", event: "no-elimination" });
+      publicEvents.push(`Round ${round}: vote ended with no lynch.`);
       writeEvent(res, "stdout", { data: `[referee] day ${round}: no elimination\n` });
     }
 
@@ -370,29 +408,50 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
     }
 
     const liveWolves = alive.filter((id) => roles.get(id) === "wolf");
-    const wolfOk = await runAgentPhase(
-      `referee round ${round} wolf`,
-      liveWolves,
-      "wolf",
-      { ...roundEnv, ACTIVE_PLAYER_IDS: alive.join(",") },
-      res,
-      shouldAbort,
-      isClosed,
-    );
-    if (!wolfOk) return false;
+    const wolfRotationRows = [];
+    const MAX_WOLF_ROTATIONS = 3;
+    for (let rotation = 1; rotation <= MAX_WOLF_ROTATIONS; rotation += 1) {
+      const wolfEnv = envForId("night-wolf", round, roundEnv, {
+        WOLF_CHANNEL_JSON: JSON.stringify(wolfRotationRows),
+      });
+      const wolfOk = await runAgentPhase(
+        `referee round ${round} wolf rotation ${rotation}`,
+        liveWolves,
+        "wolf",
+        wolfEnv,
+        res,
+        shouldAbort,
+        isClosed,
+      );
+      if (!wolfOk) return false;
 
-    const wolfLog = await runFilteredQuery(
-      `referee round ${round} wolf log`,
-      "wolf_channel",
-      roundEnv,
-      res,
-      (row) =>
-        Number(row.round) === round &&
-        row.action === "wolf-kill" &&
-        alive.includes(row.agent_id) &&
-        alive.includes(row.target),
-    );
-    if (wolfLog.code !== 0) return false;
+      const rotationLog = await runFilteredQuery(
+        `referee round ${round} wolf log rotation ${rotation}`,
+        "wolf_channel",
+        roundEnv,
+        res,
+        (row) =>
+          Number(row.round) === round &&
+          (row.action === "wolf-kill" || row.action === "wolf-done") &&
+          alive.includes(row.agent_id) &&
+          alive.includes(row.target),
+      );
+      if (rotationLog.code !== 0) return false;
+      wolfRotationRows.splice(0, wolfRotationRows.length, ...rotationLog.rows);
+
+      const latestByWolf = latestRowPerAgent(wolfRotationRows);
+      const allDone =
+        liveWolves.length > 0 &&
+        liveWolves.every((id) => latestByWolf.get(id)?.action === "wolf-done");
+      if (allDone) {
+        writeEvent(res, "stdout", {
+          data: `[referee] night ${round}: wolf consensus reached after rotation ${rotation}\n`,
+        });
+        break;
+      }
+    }
+
+    const wolfLog = { rows: latestKillsPerWolf(wolfRotationRows, liveWolves) };
 
     const liveDoctors = alive.filter((id) => roles.get(id) === "doctor");
     const doctorOk = await runAgentPhase(
@@ -533,15 +592,16 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
   return true;
 }
 
-async function runAgentPhase(command, ids, phase, env, res, shouldAbort, isClosed) {
+async function runAgentPhase(command, ids, phase, envOrFn, res, shouldAbort, isClosed) {
   writeEvent(res, "step", { command });
+  const getEnv = typeof envOrFn === "function" ? envOrFn : () => envOrFn;
 
   for (const id of ids) {
     if (isClosed()) return false;
     const code = await runStepInCurrent(
       "./bin/labctl",
       ["run-agent", id, phase],
-      env,
+      getEnv(id),
       res,
       shouldAbort,
     );

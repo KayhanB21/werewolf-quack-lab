@@ -272,7 +272,8 @@ model_content_turn_json() {
         action: (.action // "speak"),
         target: (.target // ""),
         public_text: (.public_text // ""),
-        rationale: (.rationale // "No rationale returned.")
+        rationale: (.rationale // "No rationale returned."),
+        done: ((.done // false) == true)
       }
     ' <<<"${content}"
     return 0
@@ -287,6 +288,7 @@ openai_turn_json() {
     exit 1
   fi
 
+  local wolf_channel="${WOLF_CHANNEL_JSON:-[]}"
   local payload
   payload="$(
     jq -n \
@@ -297,19 +299,20 @@ openai_turn_json() {
       --arg player_ids "${PLAYER_IDS}" \
       --arg phase "${PHASE}" \
       --arg round "${ROUND}" \
+      --arg wolf_channel "${wolf_channel}" \
       '{
         model: $model,
         temperature: 0.2,
-        max_tokens: 180,
+        max_tokens: 220,
         response_format: {type: "json_object"},
         messages: [
           {
             role: "system",
-            content: "You are one Werewolf game agent. Return one JSON object only with action, target, public_text, and rationale. The word JSON is required. In day phase, this is public discussion only: use speak, accuse, or investigate, and do not vote. In vote phase, use vote. In wolf phase, use wolf-kill, choose a non-partner non-self alive target, and keep public_text empty. In seer phase, use seer-investigate, choose an alive non-self target, and keep public_text empty. In doctor phase, use doctor-save, choose any alive target including yourself, and keep public_text empty. Make public_text a short natural sentence from this agent only when the phase allows public speech."
+            content: "You are one Werewolf game agent. Return one JSON object only with action, target, public_text, rationale, and (for wolves) an optional boolean done. The word JSON is required. In day phase, this is public discussion only: use speak, accuse, or investigate, and do not vote. In vote phase, use vote. In wolf phase, choose a non-partner non-self alive target and keep public_text empty: emit action=wolf-kill to propose this target, or action=wolf-kill with done=true (or action=wolf-done) when you accept the channel consensus as final. In seer phase, use seer-investigate, choose an alive non-self target, and keep public_text empty. In doctor phase, use doctor-save, choose any alive target including yourself, and keep public_text empty. Make public_text a short natural sentence from this agent only when the phase allows public speech."
           },
           {
             role: "user",
-            content: ("Return JSON for this turn. agent=" + $node + " role=" + $role + " partners=" + $partners + " player_ids=" + $player_ids + " phase=" + $phase + " round=" + $round)
+            content: ("Return JSON for this turn. agent=" + $node + " role=" + $role + " partners=" + $partners + " player_ids=" + $player_ids + " phase=" + $phase + " round=" + $round + " wolf_channel=" + $wolf_channel)
           }
         ]
       }'
@@ -377,8 +380,14 @@ normalize_turn_json() {
         return 0
       fi
 
-      action="wolf-kill"
+      local raw_done
+      raw_done="$(jq -r '(.done // false) | tostring' <<<"${raw_json}")"
       target="$(normalize_target "${raw_target}")"
+      if [[ "${raw_done}" == "true" || "${raw_action}" == "wolf-done" ]]; then
+        action="wolf-done"
+      else
+        action="wolf-kill"
+      fi
       public_text=""
       rationale="${raw_rationale:-Wolf phase private action.}"
       ;;

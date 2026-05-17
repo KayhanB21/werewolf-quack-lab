@@ -6,6 +6,8 @@ import {
   buildLabEnv,
   chooseTarget,
   getActionPlan,
+  latestKillsPerWolf,
+  latestRowPerAgent,
   listActions,
   resolveNightOutcome,
   toHostModelUrl,
@@ -237,5 +239,49 @@ assert.deepEqual(
   { outcome: "saved", target: "agent-b", votes: 1 },
   "multiple doctor proposals: any matching save cancels the kill",
 );
+
+const wolfRotationRows = [
+  { agent_id: "agent-a", action: "wolf-kill", target: "agent-b", decided_at: "2026-05-16 00:00:01" },
+  { agent_id: "agent-d", action: "wolf-kill", target: "agent-c", decided_at: "2026-05-16 00:00:02" },
+  { agent_id: "agent-a", action: "wolf-done", target: "agent-c", decided_at: "2026-05-16 00:00:03" },
+  { agent_id: "agent-d", action: "wolf-done", target: "agent-c", decided_at: "2026-05-16 00:00:04" },
+];
+const latest = latestRowPerAgent(wolfRotationRows);
+assert.equal(latest.get("agent-a").action, "wolf-done");
+assert.equal(latest.get("agent-a").target, "agent-c");
+assert.equal(latest.get("agent-d").action, "wolf-done");
+
+const tally = latestKillsPerWolf(wolfRotationRows, ["agent-a", "agent-d"]);
+assert.equal(tally.length, 2);
+assert.deepEqual(tally.map((row) => row.target).sort(), ["agent-c", "agent-c"]);
+assert.deepEqual(
+  resolveNightOutcome(tally, []),
+  { outcome: "kill", target: "agent-c", votes: 2 },
+);
+
+// Wolves disagreeing in final rotation: split vote -> alphabetic tiebreak via chooseTarget
+const splitRows = [
+  { agent_id: "agent-a", action: "wolf-kill", target: "agent-b", decided_at: "t1" },
+  { agent_id: "agent-d", action: "wolf-kill", target: "agent-c", decided_at: "t2" },
+];
+const splitTally = latestKillsPerWolf(splitRows, ["agent-a", "agent-d"]);
+assert.deepEqual(
+  resolveNightOutcome(splitTally, []),
+  { outcome: "kill", target: "agent-b", votes: 1 },
+);
+
+const rotationSummary = summarizeStep(
+  "referee round 2 wolf rotation 1",
+  "[agent-a] wrote wolf-kill for phase=wolf\n[agent-d] wrote wolf-kill for phase=wolf\n",
+);
+assert.equal(rotationSummary.title, "Round 2 Wolf Rotation 1");
+assert.equal(rotationSummary.rows.length, 2);
+
+const rotationLogSummary = summarizeStep(
+  "referee round 2 wolf log rotation 2",
+  `[{"round":2,"agent_id":"agent-a","action":"wolf-done","target":"agent-c","rationale":"agree"}]\n`,
+);
+assert.equal(rotationLogSummary.title, "Round 2 Wolf Channel (rotation 2)");
+assert.equal(rotationLogSummary.rows[0].target, "agent-c");
 
 console.log("ok - lab web action mapping");

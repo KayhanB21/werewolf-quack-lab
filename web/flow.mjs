@@ -1,4 +1,24 @@
 export function classifyCommand(command) {
+  const wolfRotation = command.match(/^referee round ([0-9]+) wolf rotation ([0-9]+)$/);
+  if (wolfRotation) {
+    const [, round, rotation] = wolfRotation;
+    return {
+      kind: "actions",
+      title: `Round ${round} Wolf Rotation ${rotation}`,
+      subject: "Private wolves",
+    };
+  }
+
+  const wolfRotationLog = command.match(/^referee round ([0-9]+) wolf log rotation ([0-9]+)$/);
+  if (wolfRotationLog) {
+    const [, round, rotation] = wolfRotationLog;
+    return {
+      kind: "wolfChannel",
+      title: `Round ${round} Wolf Channel (rotation ${rotation})`,
+      subject: "Row-filtered view",
+    };
+  }
+
   const roundPhase = command.match(/^referee round ([0-9]+) (discussion|voting|wolf|doctor|seer)$/);
   if (roundPhase) {
     const [, round, phase] = roundPhase;
