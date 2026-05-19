@@ -309,4 +309,66 @@ if ! grep -Fq "I abstain this round" "${abstain_sql}"; then
   exit 1
 fi
 
+suspicions_sql="${TMP_DIR}/suspicions.sql"
+run_action \
+  "day" \
+  "villager" \
+  "" \
+  "${suspicions_sql}" \
+  "openai-compatible" \
+  '{"action":"speak","target":"","public_text":"agent-b is acting strange.","rationale":"Reading the room.","suspicions":[{"target":"agent-b","p_wolf":0.7,"reasoning":"Dodged questions."},{"target":"agent-d","p_wolf":0.3,"reasoning":"Helpful tone."},{"target":"not-a-player","p_wolf":0.9,"reasoning":"Should be filtered."}],"knowledge":[{"source":"behavior","content":"agent-b avoided eye contact metaphorically.","confidence":0.6}]}' \
+  "${fake_bin}:${PATH}"
+
+if ! grep -Fq "INSERT INTO suspicions" "${suspicions_sql}"; then
+  echo "agent should emit suspicion INSERTs when the model returns suspicions" >&2
+  cat "${suspicions_sql}" >&2
+  exit 1
+fi
+
+if ! grep -Fq "'agent-b', 0.7" "${suspicions_sql}"; then
+  echo "suspicion row should carry target=agent-b and p_wolf=0.7" >&2
+  cat "${suspicions_sql}" >&2
+  exit 1
+fi
+
+if grep -Fq "not-a-player" "${suspicions_sql}"; then
+  echo "suspicions targeting non-players should be filtered out" >&2
+  cat "${suspicions_sql}" >&2
+  exit 1
+fi
+
+if ! grep -Fq "INSERT INTO knowledge" "${suspicions_sql}"; then
+  echo "agent should emit knowledge INSERTs when the model returns knowledge" >&2
+  cat "${suspicions_sql}" >&2
+  exit 1
+fi
+
+if ! grep -Fq "'behavior'" "${suspicions_sql}"; then
+  echo "knowledge row should carry source=behavior" >&2
+  cat "${suspicions_sql}" >&2
+  exit 1
+fi
+
+no_suspicions_sql="${TMP_DIR}/no-suspicions.sql"
+run_action \
+  "day" \
+  "villager" \
+  "" \
+  "${no_suspicions_sql}" \
+  "openai-compatible" \
+  '{"action":"speak","target":"","public_text":"hello.","rationale":"nothing yet."}' \
+  "${fake_bin}:${PATH}"
+
+if grep -Fq "INSERT INTO suspicions" "${no_suspicions_sql}"; then
+  echo "agent should not emit suspicion INSERTs when none are returned" >&2
+  cat "${no_suspicions_sql}" >&2
+  exit 1
+fi
+
+if grep -Fq "INSERT INTO knowledge" "${no_suspicions_sql}"; then
+  echo "agent should not emit knowledge INSERTs when none are returned" >&2
+  cat "${no_suspicions_sql}" >&2
+  exit 1
+fi
+
 echo "ok - agent action writer emits local DuckDB intents"

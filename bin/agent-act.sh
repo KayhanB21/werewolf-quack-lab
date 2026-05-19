@@ -273,7 +273,9 @@ model_content_turn_json() {
         target: (.target // ""),
         public_text: (.public_text // ""),
         rationale: (.rationale // "No rationale returned."),
-        done: ((.done // false) == true)
+        done: ((.done // false) == true),
+        suspicions: (if (.suspicions // null) | type == "array" then .suspicions else [] end),
+        knowledge: (if (.knowledge // null) | type == "array" then .knowledge else [] end)
       }
     ' <<<"${content}"
     return 0
@@ -320,8 +322,12 @@ Always respond with a single JSON object of this shape:
   \"public_text\": \"<what you say out loud this rotation, 1-2 sentences, always non-empty during day>\",
   \"done\": <true ONLY if you genuinely have nothing new to add after speaking at least once this round, otherwise false>,
   \"action\": \"wolf-kill|wolf-done|seer-investigate|doctor-save|speak|accuse|investigate|vote\",
-  \"target\": \"<one of the living agent ids, or empty when no target>\"
+  \"target\": \"<one of the living agent ids, or empty when no target>\",
+  \"suspicions\": [{\"target\": \"<agent id>\", \"p_wolf\": <0..1>, \"reasoning\": \"<one sentence>\"}],
+  \"knowledge\": [{\"source\": \"deduction|seer|claim|behavior\", \"content\": \"<one fact>\", \"confidence\": <0..1>}]
 }
+
+The suspicions and knowledge arrays are optional and private. Use them to log what you believe about other players this round. They will be persisted to your own private DuckDB and influence your future turns. Keep each array to at most four entries.
 
 Action type by phase:
 - day: action is speak, accuse, or investigate. target may be empty for speak; otherwise an alive non-self id. public_text must be present.
@@ -510,7 +516,61 @@ case "${LLM_PROVIDER}" in
     ;;
 esac
 
+raw_turn_json="${turn_json}"
 turn_json="$(normalize_turn_json "${turn_json}")"
+
+clamp_unit() {
+  awk -v v="$1" 'BEGIN{
+    if (v+0 != v+0) {print "0.5"; exit}
+    if (v+0 < 0) {print "0"; exit}
+    if (v+0 > 1) {print "1"; exit}
+    printf "%g", v+0
+  }'
+}
+
+emit_suspicions_sql() {
+  local raw="$1"
+  local entries entry target p_wolf reasoning count=0
+  entries="$(jq -c '(.suspicions // []) | if type == "array" then .[:4] else [] end | .[]' <<<"${raw}" 2>/dev/null || true)"
+  [[ -z "${entries}" ]] && return 0
+  while IFS= read -r entry; do
+    [[ -z "${entry}" ]] && continue
+    target="$(jq -r '.target // ""' <<<"${entry}" 2>/dev/null)"
+    [[ -z "${target}" ]] && continue
+    contains_csv "${target}" "${PLAYER_IDS}" || continue
+    p_wolf="$(jq -r '(.p_wolf // 0.5) | tostring' <<<"${entry}" 2>/dev/null)"
+    p_wolf="$(clamp_unit "${p_wolf}")"
+    reasoning="$(jq -r '.reasoning // ""' <<<"${entry}" 2>/dev/null)"
+    printf 'INSERT INTO suspicions (round, agent_id, target_agent, p_wolf, reasoning, updated_at) VALUES (%s, %s, %s, %s, %s, now());\n' \
+      "${ROUND}" \
+      "$(sql_quote "${NODE_ID}")" \
+      "$(sql_quote "${target}")" \
+      "${p_wolf}" \
+      "$(sql_quote "${reasoning}")"
+    count=$((count + 1))
+  done <<<"${entries}"
+}
+
+emit_knowledge_sql() {
+  local raw="$1"
+  local entries entry source content confidence
+  entries="$(jq -c '(.knowledge // []) | if type == "array" then .[:4] else [] end | .[]' <<<"${raw}" 2>/dev/null || true)"
+  [[ -z "${entries}" ]] && return 0
+  while IFS= read -r entry; do
+    [[ -z "${entry}" ]] && continue
+    content="$(jq -r '.content // ""' <<<"${entry}" 2>/dev/null)"
+    [[ -z "${content}" ]] && continue
+    source="$(jq -r '.source // "deduction"' <<<"${entry}" 2>/dev/null)"
+    confidence="$(jq -r '(.confidence // 0.5) | tostring' <<<"${entry}" 2>/dev/null)"
+    confidence="$(clamp_unit "${confidence}")"
+    printf 'INSERT INTO knowledge (round, agent_id, source, content, confidence, created_at) VALUES (%s, %s, %s, %s, %s, now());\n' \
+      "${ROUND}" \
+      "$(sql_quote "${NODE_ID}")" \
+      "$(sql_quote "${source}")" \
+      "$(sql_quote "${content}")" \
+      "${confidence}"
+  done <<<"${entries}"
+}
 
 action="$(jq -r '.action' <<<"${turn_json}")"
 target="$(jq -r '.target // ""' <<<"${turn_json}")"
@@ -534,9 +594,16 @@ agent_sql="$(sql_quote "${NODE_ID}")"
 
 wait_for_pipe
 
-cat > "${ACTION_PIPE}" <<SQL
+suspicions_sql="$(emit_suspicions_sql "${raw_turn_json}")"
+knowledge_sql="$(emit_knowledge_sql "${raw_turn_json}")"
+
+{
+  cat <<SQL
 INSERT INTO intents (round, agent_id, action, target, rationale, public_text, decided_at)
 VALUES (${ROUND}, ${agent_sql}, ${action_sql}, ${target_sql}, ${rationale_sql}, ${public_sql}, now());
 SQL
+  [[ -n "${suspicions_sql}" ]] && printf "%s\n" "${suspicions_sql}"
+  [[ -n "${knowledge_sql}" ]] && printf "%s\n" "${knowledge_sql}"
+} > "${ACTION_PIPE}"
 
 echo "[${NODE_ID}] wrote ${action} for phase=${PHASE}"

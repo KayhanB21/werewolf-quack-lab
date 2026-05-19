@@ -546,13 +546,13 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
         target: night.target,
         votes: night.votes,
       });
-      publicEvents.push(`Round ${round}: the doctor's save cancelled the wolves' attack.`);
+      publicEvents.push(`Round ${round}: no one died last night.`);
       writeEvent(res, "stdout", {
-        data: `[referee] night ${round}: ${night.target} was attacked but saved by the doctor\n`,
+        data: `[referee] night ${round}: ${night.target} was attacked but saved (kept private)\n`,
       });
     } else {
       history.push({ round, phase: "wolf", event: "no-kill" });
-      publicEvents.push(`Round ${round}: night passed without a kill.`);
+      publicEvents.push(`Round ${round}: no one died last night.`);
       writeEvent(res, "stdout", { data: `[referee] night ${round}: no kill\n` });
     }
 
