@@ -34,7 +34,7 @@ CREATE TABLE quack_scopes (
 -- the scope's allowed_identifiers list. Private tables are always denied.
 CREATE MACRO lab_authorize(sid, query) AS (
   regexp_matches(upper(regexp_replace(trim(query), '^/\*[^*]*\*/\s*', '', 'g')), '^(SELECT|FROM|WITH|EXPLAIN|DESCRIBE|SHOW)\b')
-  AND NOT regexp_matches(lower(query), '\b(self|intents|knowledge|suspicions|votes|game_flags|lab_secret|quack_scopes)\b')
+  AND NOT regexp_matches(lower(query), '\b(self|intents|knowledge|suspicions|votes|eliminations|game_flags|lab_secret|quack_scopes)\b')
   AND EXISTS (
     SELECT 1
     FROM quack_scopes s

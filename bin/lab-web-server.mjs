@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  applyBeliefsMarkers,
   buildContextForAgent,
   buildGameConfig,
   buildLabEnv,
@@ -13,8 +14,11 @@ import {
   latestKillsPerWolf,
   latestRowPerAgent,
   listActions,
+  newRefereeGameId,
+  parseBeliefsMarkers,
   resolveLynch,
   resolveNightOutcome,
+  serializeRefereeEvent,
   toHostModelUrl,
 } from "./lab-web-actions.mjs";
 import { extractJsonArrays } from "../web/flow.mjs";
@@ -275,10 +279,36 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
   const publicLog = [];
   const publicEvents = [];
   const privateNotesByAgent = new Map(players.map((player) => [player.id, []]));
+  const beliefsByAgent = new Map(
+    players.map((player) => [player.id, { suspicions: [], knowledge: [] }]),
+  );
   let alive = players.map((player) => player.id);
   let winner = "";
   let reason = "";
   const maxRounds = clampInt(body.maxRounds, 8, 1, 20);
+
+  const gameId = newRefereeGameId();
+  const gamesDir = path.join(GENERATED_DIR, "games");
+  const logPath = path.join(gamesDir, `${gameId}.jsonl`);
+  await mkdir(gamesDir, { recursive: true });
+  const logEvent = async (event) => {
+    try {
+      await appendFile(logPath, serializeRefereeEvent(event));
+    } catch (error) {
+      writeEvent(res, "stderr", {
+        data: `[referee] failed to append durable log: ${error.message}\n`,
+      });
+    }
+  };
+  await logEvent({
+    kind: "game-start",
+    game_id: gameId,
+    players: players.map((player) => ({ id: player.id, role: player.role })),
+    provider: env.LLM_PROVIDER,
+    model: env.LLM_MODEL,
+    max_rounds: maxRounds,
+  });
+  writeEvent(res, "stdout", { data: `[referee] durable log: ${path.relative(ROOT_DIR, logPath)}\n` });
 
   function envForId(phase, round, base, extra = {}) {
     return (id) => ({
@@ -294,6 +324,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
           publicEvents,
           publicLog,
           privateNotesByAgent,
+          beliefsByAgent,
         }),
       ),
     });
@@ -310,6 +341,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
 
   for (let round = 1; round <= maxRounds; round += 1) {
     const roundEnv = { ...env, ROUND: String(round) };
+    await logEvent({ kind: "round-start", round, alive: alive.slice() });
     writeEvent(res, "stdout", {
       data: `[referee] round ${round} starts with ${alive.join(", ")}\n`,
     });
@@ -322,6 +354,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
       res,
       shouldAbort,
       isClosed,
+      beliefsByAgent,
     );
     if (!discussionOk) return false;
 
@@ -352,6 +385,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
       res,
       shouldAbort,
       isClosed,
+      beliefsByAgent,
     );
     if (!voteOk) return false;
 
@@ -387,12 +421,24 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
         ["ref-reveal", lynch.target, String(round), announcement],
         roundEnv,
       );
+      await runBufferedStep(
+        "./bin/labctl",
+        ["ref-elim", lynch.target, String(round), revealedRole, "lynch"],
+        roundEnv,
+      );
       history.push({
         round,
         phase: "day",
         event: "vote",
         target: lynch.target,
         votes: lynch.votes,
+      });
+      await logEvent({
+        kind: "lynch",
+        round,
+        target: lynch.target,
+        votes: lynch.votes,
+        revealed_role: revealedRole,
       });
       writeEvent(res, "stdout", {
         data: `[referee] day ${round}: ${lynch.target} eliminated by ${lynch.votes} vote(s); revealed role: ${revealedRole}\n`,
@@ -404,6 +450,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
         : `Round ${round}: vote ended with no lynch.`;
       history.push({ round, phase: "day", event: tied ? "tie" : "no-elimination" });
       publicEvents.push(note);
+      await logEvent({ kind: "no-lynch", round, tied, votes: lynch.votes });
       writeEvent(res, "stdout", { data: `[referee] ${note}\n` });
     }
 
@@ -429,6 +476,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
         res,
         shouldAbort,
         isClosed,
+        beliefsByAgent,
       );
       if (!wolfOk) return false;
 
@@ -469,6 +517,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
       res,
       shouldAbort,
       isClosed,
+      beliefsByAgent,
     );
     if (!doctorOk) return false;
 
@@ -494,6 +543,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
       res,
       shouldAbort,
       isClosed,
+      beliefsByAgent,
     );
     if (!seerOk) return false;
 
@@ -528,12 +578,24 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
         ["ref-reveal", night.target, String(round), announcement],
         roundEnv,
       );
+      await runBufferedStep(
+        "./bin/labctl",
+        ["ref-elim", night.target, String(round), revealedRole, "wolf-kill"],
+        roundEnv,
+      );
       history.push({
         round,
         phase: "wolf",
         event: "kill",
         target: night.target,
         votes: night.votes,
+      });
+      await logEvent({
+        kind: "wolf-kill",
+        round,
+        target: night.target,
+        votes: night.votes,
+        revealed_role: revealedRole,
       });
       writeEvent(res, "stdout", {
         data: `[referee] night ${round}: ${night.target} killed by wolves; revealed role: ${revealedRole}\n`,
@@ -547,12 +609,19 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
         votes: night.votes,
       });
       publicEvents.push(`Round ${round}: no one died last night.`);
+      await logEvent({
+        kind: "wolf-saved",
+        round,
+        target: night.target,
+        votes: night.votes,
+      });
       writeEvent(res, "stdout", {
         data: `[referee] night ${round}: ${night.target} was attacked but saved (kept private)\n`,
       });
     } else {
       history.push({ round, phase: "wolf", event: "no-kill" });
       publicEvents.push(`Round ${round}: no one died last night.`);
+      await logEvent({ kind: "no-kill", round });
       writeEvent(res, "stdout", { data: `[referee] night ${round}: no kill\n` });
     }
 
@@ -584,6 +653,13 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
           target: proposal.target,
           result: targetRole,
         });
+        await logEvent({
+          kind: "seer-learn",
+          round,
+          agent: seer,
+          target: proposal.target,
+          result: targetRole,
+        });
         writeEvent(res, "stdout", {
           data: `[referee] night ${round}: seer ${seer} learns ${proposal.target} is ${targetRole}\n`,
         });
@@ -610,7 +686,17 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
     alive,
     eliminated,
     history,
+    durable_log: path.relative(ROOT_DIR, logPath),
   };
+
+  await logEvent({
+    kind: "game-end",
+    winner,
+    reason,
+    rounds: result.rounds,
+    alive: alive.slice(),
+    eliminated: eliminated.slice(),
+  });
 
   writeEvent(res, "step", { command: "referee auto-game" });
   writeEvent(res, "stdout", { data: `${JSON.stringify([result])}\n` });
@@ -618,19 +704,22 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
   return true;
 }
 
-async function runAgentPhase(command, ids, phase, envOrFn, res, shouldAbort, isClosed) {
+async function runAgentPhase(command, ids, phase, envOrFn, res, shouldAbort, isClosed, beliefsByAgent) {
   writeEvent(res, "step", { command });
   const getEnv = typeof envOrFn === "function" ? envOrFn : () => envOrFn;
 
   for (const id of ids) {
     if (isClosed()) return false;
-    const code = await runStepInCurrent(
+    const { code, stdout } = await runStepCapture(
       "./bin/labctl",
       ["run-agent", id, phase],
       getEnv(id),
       res,
       shouldAbort,
     );
+    if (beliefsByAgent) {
+      applyBeliefsMarkers(beliefsByAgent, parseBeliefsMarkers(stdout));
+    }
     if (code !== 0) {
       writeEvent(res, "exit", { code, signal: null });
       return false;

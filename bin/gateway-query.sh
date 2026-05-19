@@ -6,15 +6,22 @@ DATA_DIR="${DATA_DIR:-/data}"
 DB_PATH="${DB_PATH:-${DATA_DIR}/gateway.duckdb}"
 QUERY_NAME="${1:-public_log}"
 QUERY_SQL="/tmp/gateway-${QUERY_NAME}.sql"
+TIMELINE_PATH="${TIMELINE_PATH:-${DATA_DIR}/timeline.jsonl}"
 
 mkdir -p "${DATA_DIR}"
 
 : "${LAB_QUACK_SECRET:?LAB_QUACK_SECRET is required}"
 : "${PLAYERS_JSON:?PLAYERS_JSON is required}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lab-span.sh"
+
 mapfile -t PLAYER_HOSTS < <(jq -r '.[].id' <<<"${PLAYERS_JSON}")
 TOKEN="$(LAB_QUACK_SECRET="${LAB_QUACK_SECRET}" /app/bin/mint-token.sh "${QUERY_NAME}" 60 gateway)"
 SCOPE_TAG="/* scope: ${QUERY_NAME} */ "
+START_MS="$(span_now_ms)"
+HOSTS_CSV="$(IFS=,; printf "%s" "${PLAYER_HOSTS[*]}")"
 
 case "${QUERY_NAME}" in
   whoami)
@@ -101,10 +108,14 @@ SQL
   "${DUCKDB_BIN}" -json "${DB_PATH}" < "${QUERY_SQL}" 2>&1 | tee "${output_file}"
   status="${PIPESTATUS[0]}"
   set -e
+  END_MS="$(span_now_ms)"
+  DURATION_MS=$((END_MS - START_MS))
   if grep -q "Authorization failed" "${output_file}"; then
     echo "[gateway] expected Quack authorization denial observed"
+    emit_span --name "${QUERY_NAME}" --scope denied --status denied --hosts "${first_host}" --duration-ms "${DURATION_MS}" --out "${TIMELINE_PATH}"
     exit 0
   fi
+  emit_span --name "${QUERY_NAME}" --scope "${QUERY_NAME}" --status "$([[ $status -eq 0 ]] && echo ok || echo error)" --hosts "${first_host}" --duration-ms "${DURATION_MS}" --out "${TIMELINE_PATH}"
   exit "${status}"
 fi
 
@@ -133,4 +144,11 @@ append_logs_query
 
 echo "[gateway] running ${QUERY_NAME}"
 echo "[gateway] remote SQL: ${REMOTE_SQL}"
+set +e
 "${DUCKDB_BIN}" -json "${DB_PATH}" < "${QUERY_SQL}"
+status="$?"
+set -e
+END_MS="$(span_now_ms)"
+DURATION_MS=$((END_MS - START_MS))
+emit_span --name "${QUERY_NAME}" --scope "${QUERY_NAME}" --status "$([[ $status -eq 0 ]] && echo ok || echo error)" --hosts "${HOSTS_CSV}" --duration-ms "${DURATION_MS}" --out "${TIMELINE_PATH}"
+exit "${status}"

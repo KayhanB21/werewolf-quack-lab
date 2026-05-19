@@ -23,10 +23,14 @@ Commands:
   run-day         Ask every player container to take one day action
   run-wolf        Ask every wolf container to take one wolf action
   query <name>    Run a gateway query
+  timeline        Cat the federation timeline JSONL from the gateway volume
+  timeline-clear  Truncate the federation timeline JSONL on the gateway
   ref-knowledge <id> <round> <source> <content>
                   Referee writes a knowledge row into one player's private DB
   ref-reveal <id> <round> <text>
                   Referee writes a public role-reveal row into one player's DB
+  ref-elim <id> <round> <role> <cause>
+                  Referee records an elimination row in one player's DB
   smoke           Generate, start, run agent actions, and verify Quack behavior
   config          Render the merged Docker Compose config
 
@@ -143,6 +147,19 @@ ref_reveal() {
   echo "[labctl] wrote role-reveal row for ${id}"
 }
 
+ref_elim() {
+  local id="${1:?ref-elim requires a player id}"
+  local round="${2:?ref-elim requires a round}"
+  local role="${3:?ref-elim requires a role}"
+  local cause="${4:?ref-elim requires a cause}"
+  local id_sql role_sql cause_sql
+  id_sql="$(sql_quote "${id}")"
+  role_sql="$(sql_quote "${role}")"
+  cause_sql="$(sql_quote "${cause}")"
+  ref_write_sql "${id}" "INSERT INTO eliminations (round, agent_id, role, cause, decided_at) VALUES (${round}, ${id_sql}, ${role_sql}, ${cause_sql}, now());"
+  echo "[labctl] wrote elimination row for ${id}"
+}
+
 case "${1:-}" in
   generate)
     ./bin/generate-compose.sh --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}"
@@ -169,11 +186,23 @@ case "${1:-}" in
     query_name="${2:-public_log}"
     compose exec gateway /app/bin/gateway-query.sh "${query_name}"
     ;;
+  timeline)
+    ensure_generated
+    compose exec -T gateway sh -c 'cat /data/timeline.jsonl 2>/dev/null || true'
+    ;;
+  timeline-clear)
+    ensure_generated
+    compose exec -T gateway sh -c ': > /data/timeline.jsonl'
+    echo "[labctl] cleared /data/timeline.jsonl"
+    ;;
   ref-knowledge)
     ref_knowledge "${2:-}" "${3:-}" "${4:-}" "${5:-}"
     ;;
   ref-reveal)
     ref_reveal "${2:-}" "${3:-}" "${4:-}"
+    ;;
+  ref-elim)
+    ref_elim "${2:-}" "${3:-}" "${4:-}" "${5:-}"
     ;;
   smoke)
     ./bin/generate-compose.sh --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}"

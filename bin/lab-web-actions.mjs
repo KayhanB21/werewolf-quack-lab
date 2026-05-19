@@ -236,11 +236,25 @@ export function buildContextForAgent(id, opts) {
     publicEvents = [],
     publicLog = [],
     privateNotesByAgent = null,
+    beliefsByAgent = null,
   } = opts || {};
   const notes =
     privateNotesByAgent && typeof privateNotesByAgent.get === "function"
       ? privateNotesByAgent.get(id) || []
       : (opts?.privateNotes || []);
+  const beliefs =
+    beliefsByAgent && typeof beliefsByAgent.get === "function"
+      ? beliefsByAgent.get(id) || { suspicions: [], knowledge: [] }
+      : { suspicions: [], knowledge: [] };
+  const ownIntents = publicLog
+    .filter((row) => (row.agent_id || row.speaker) === id)
+    .slice(-10)
+    .map((row) => ({
+      round: Number(row.round) || 0,
+      action: row.action || "",
+      target: row.target || "",
+      text: row.public_text || row.text || "",
+    }));
   return {
     round: Number(round) || 1,
     phase: String(phase || ""),
@@ -260,8 +274,97 @@ export function buildContextForAgent(id, opts) {
       target: row.target || "",
       text: row.public_text || row.text || "",
     })),
+    own_intents: ownIntents,
     private_notes: notes.slice(-20),
+    beliefs: {
+      suspicions: (beliefs.suspicions || []).slice(-10),
+      knowledge: (beliefs.knowledge || []).slice(-10),
+    },
   };
+}
+
+export function parseBeliefsMarkers(text) {
+  const results = [];
+  if (!text) return results;
+  for (const line of text.split(/\r?\n/)) {
+    const idx = line.indexOf("__BELIEFS__ ");
+    if (idx < 0) continue;
+    const jsonText = line.slice(idx + "__BELIEFS__ ".length).trim();
+    if (!jsonText) continue;
+    try {
+      const parsed = JSON.parse(jsonText);
+      if (parsed && typeof parsed === "object" && parsed.agent) {
+        results.push({
+          agent: String(parsed.agent),
+          round: Number(parsed.round) || 0,
+          phase: String(parsed.phase || ""),
+          suspicions: Array.isArray(parsed.suspicions) ? parsed.suspicions : [],
+          knowledge: Array.isArray(parsed.knowledge) ? parsed.knowledge : [],
+        });
+      }
+    } catch {
+      // ignore malformed markers
+    }
+  }
+  return results;
+}
+
+export function applyBeliefsMarkers(beliefsByAgent, markers) {
+  for (const marker of markers || []) {
+    const existing = beliefsByAgent.get(marker.agent) || {
+      suspicions: [],
+      knowledge: [],
+    };
+    for (const item of marker.suspicions) {
+      if (!item || typeof item !== "object") continue;
+      existing.suspicions.push({
+        round: marker.round,
+        target: String(item.target || ""),
+        p_wolf: clampUnit(item.p_wolf),
+        reasoning: String(item.reasoning || ""),
+      });
+    }
+    for (const item of marker.knowledge) {
+      if (!item || typeof item !== "object") continue;
+      existing.knowledge.push({
+        round: marker.round,
+        source: String(item.source || "deduction"),
+        content: String(item.content || ""),
+        confidence: clampUnit(item.confidence),
+      });
+    }
+    beliefsByAgent.set(marker.agent, existing);
+  }
+  return beliefsByAgent;
+}
+
+export function serializeRefereeEvent(event, nowIso) {
+  if (!event || typeof event !== "object") {
+    throw new Error("referee event must be an object");
+  }
+  if (!event.kind || typeof event.kind !== "string") {
+    throw new Error("referee event must have a kind");
+  }
+  const { kind, ...rest } = event;
+  const ts = typeof nowIso === "string" ? nowIso : new Date().toISOString();
+  return `${JSON.stringify({ ts, kind, ...rest })}\n`;
+}
+
+export function newRefereeGameId(nowIso) {
+  const iso = typeof nowIso === "string" ? nowIso : new Date().toISOString();
+  const stamp = iso.replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  const suffix = Math.floor(Math.random() * 0x10000)
+    .toString(16)
+    .padStart(4, "0");
+  return `game-${stamp}-${suffix}`;
+}
+
+function clampUnit(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0.5;
+  if (num < 0) return 0;
+  if (num > 1) return 1;
+  return num;
 }
 
 export function chooseTarget(rows) {

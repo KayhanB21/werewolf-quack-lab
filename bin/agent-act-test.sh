@@ -371,4 +371,48 @@ if grep -Fq "INSERT INTO knowledge" "${no_suspicions_sql}"; then
   exit 1
 fi
 
+marker_sql="${TMP_DIR}/marker.sql"
+marker_pipe="${marker_sql}.fifo"
+marker_stdout="${TMP_DIR}/marker.stdout"
+mkfifo "${marker_pipe}"
+cat "${marker_pipe}" > "${marker_sql}" &
+marker_reader_pid="$!"
+
+env \
+  NODE_ID="agent-a" \
+  ROLE="villager" \
+  PARTNERS="" \
+  PLAYER_IDS="agent-a,agent-b,agent-d" \
+  LLM_PROVIDER="openai-compatible" \
+  LLM_BASE_URL="http://fake-openai.local/v1" \
+  FAKE_TURN_CONTENT='{"action":"speak","target":"","public_text":"hi.","rationale":"r.","suspicions":[{"target":"agent-b","p_wolf":0.4,"reasoning":"quiet"}],"knowledge":[{"source":"behavior","content":"b is quiet","confidence":0.5}]}' \
+  CONTEXT_JSON='{}' \
+  WOLF_CHANNEL_JSON='[]' \
+  PATH="${fake_bin}:${PATH}" \
+  ACTION_PIPE="${marker_pipe}" \
+  "${ROOT_DIR}/bin/agent-act.sh" --phase "day" --round 3 >"${marker_stdout}"
+
+wait "${marker_reader_pid}"
+
+if ! grep -Fq "__BELIEFS__" "${marker_stdout}"; then
+  echo "agent-act should emit a __BELIEFS__ marker line to stdout" >&2
+  cat "${marker_stdout}" >&2
+  exit 1
+fi
+
+marker_line="$(grep -F "__BELIEFS__" "${marker_stdout}" | tail -n1)"
+marker_json="${marker_line#*__BELIEFS__ }"
+
+if ! jq -e '.agent == "agent-a" and .round == 3 and .phase == "day"' >/dev/null <<<"${marker_json}"; then
+  echo "marker JSON should include agent, round, phase" >&2
+  printf '%s\n' "${marker_json}" >&2
+  exit 1
+fi
+
+if ! jq -e '.suspicions[0].target == "agent-b" and .knowledge[0].source == "behavior"' >/dev/null <<<"${marker_json}"; then
+  echo "marker JSON should carry suspicions and knowledge payloads" >&2
+  printf '%s\n' "${marker_json}" >&2
+  exit 1
+fi
+
 echo "ok - agent action writer emits local DuckDB intents"

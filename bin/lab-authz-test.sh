@@ -55,7 +55,7 @@ CREATE OR REPLACE MACRO lab_check_token(sid, client_token, server_token) AS (
 
 CREATE OR REPLACE MACRO lab_authorize(sid, query) AS (
   regexp_matches(upper(regexp_replace(trim(query), '^/\*[^*]*\*/\s*', '', 'g')), '^(SELECT|FROM|WITH|EXPLAIN|DESCRIBE|SHOW)\b')
-  AND NOT regexp_matches(lower(query), '\b(self|intents|knowledge|suspicions|votes|game_flags|lab_secret|quack_scopes)\b')
+  AND NOT regexp_matches(lower(query), '\b(self|intents|knowledge|suspicions|votes|eliminations|game_flags|lab_secret|quack_scopes)\b')
   AND EXISTS (
     SELECT 1
     FROM quack_scopes s
@@ -88,7 +88,8 @@ UNION ALL SELECT 'private_table_blocked_even_in_smoke', NOT lab_authorize('sid',
 UNION ALL SELECT 'private_table_blocked_in_denied', NOT lab_authorize('sid', '/* scope: denied */ SELECT * FROM intents')
 UNION ALL SELECT 'cross_scope_mix_rejected', NOT lab_authorize('sid', '/* scope: public_log */ SELECT * FROM public_intents JOIN wolf_channel USING(round)')
 UNION ALL SELECT 'insert_blocked', NOT lab_authorize('sid', '/* scope: public_log */ INSERT INTO public_intents VALUES (1)')
-UNION ALL SELECT 'lab_secret_table_blocked', NOT lab_authorize('sid', '/* scope: public_log */ SELECT * FROM lab_secret');
+UNION ALL SELECT 'lab_secret_table_blocked', NOT lab_authorize('sid', '/* scope: public_log */ SELECT * FROM lab_secret')
+UNION ALL SELECT 'eliminations_table_blocked', NOT lab_authorize('sid', '/* scope: public_log */ SELECT * FROM eliminations');
 SQL
 
 results="$(duckdb -csv -noheader < "${SQL_PATH}")"

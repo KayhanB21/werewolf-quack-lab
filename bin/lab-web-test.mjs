@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  applyBeliefsMarkers,
   buildContextForAgent,
   buildGameConfig,
   buildLabEnv,
@@ -10,10 +11,16 @@ import {
   latestKillsPerWolf,
   latestRowPerAgent,
   listActions,
+  newRefereeGameId,
+  parseBeliefsMarkers,
   resolveLynch,
   resolveNightOutcome,
+  serializeRefereeEvent,
   toHostModelUrl,
 } from "./lab-web-actions.mjs";
+import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { extractJsonArrays, summarizeStep } from "../web/flow.mjs";
 
 const html = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
@@ -357,5 +364,124 @@ assert.deepEqual(
   { outcome: "abstain", target: null, votes: 0 },
   "all-abstain returns abstain with zero votes",
 );
+
+// own_intents are derived from publicLog, filtered to the requesting agent
+const intentsLog = [
+  { round: 1, agent_id: "agent-a", action: "speak", target: "", public_text: "hello" },
+  { round: 1, agent_id: "agent-b", action: "accuse", target: "agent-a", public_text: "agent-a is shady" },
+  { round: 2, agent_id: "agent-a", action: "vote", target: "agent-b", public_text: "voting agent-b" },
+];
+const intentsContext = buildContextForAgent("agent-a", {
+  round: 2,
+  phase: "day-vote",
+  publicLog: intentsLog,
+});
+assert.equal(intentsContext.own_intents.length, 2);
+assert.equal(intentsContext.own_intents[0].action, "speak");
+assert.equal(intentsContext.own_intents[1].target, "agent-b");
+
+// beliefs feed into context when supplied
+const beliefsByAgent = new Map([
+  [
+    "agent-a",
+    {
+      suspicions: [{ round: 1, target: "agent-b", p_wolf: 0.6, reasoning: "evasive" }],
+      knowledge: [{ round: 1, source: "behavior", content: "agent-b dodged", confidence: 0.7 }],
+    },
+  ],
+]);
+const beliefsContext = buildContextForAgent("agent-a", {
+  round: 2,
+  phase: "day-discuss",
+  beliefsByAgent,
+});
+assert.equal(beliefsContext.beliefs.suspicions.length, 1);
+assert.equal(beliefsContext.beliefs.suspicions[0].target, "agent-b");
+assert.equal(beliefsContext.beliefs.knowledge[0].source, "behavior");
+
+const emptyBeliefsContext = buildContextForAgent("agent-b", {
+  round: 1,
+  phase: "day-discuss",
+});
+assert.deepEqual(emptyBeliefsContext.beliefs, { suspicions: [], knowledge: [] });
+assert.deepEqual(emptyBeliefsContext.own_intents, []);
+
+// parseBeliefsMarkers: pulls every __BELIEFS__ line, ignores garbage
+const sampleStdout = [
+  "[agent-a] starting",
+  '__BELIEFS__ {"agent":"agent-a","round":1,"phase":"day","suspicions":[{"target":"agent-b","p_wolf":0.7,"reasoning":"r"}],"knowledge":[]}',
+  "[agent-a] wrote speak for phase=day",
+  '__BELIEFS__ {"not":"json',
+  '__BELIEFS__ {"agent":"agent-c","round":1,"phase":"day","suspicions":[],"knowledge":[{"source":"deduction","content":"x","confidence":0.4}]}',
+].join("\n");
+const markers = parseBeliefsMarkers(sampleStdout);
+assert.equal(markers.length, 2);
+assert.equal(markers[0].agent, "agent-a");
+assert.equal(markers[0].suspicions[0].target, "agent-b");
+assert.equal(markers[1].agent, "agent-c");
+assert.equal(markers[1].knowledge[0].content, "x");
+
+// applyBeliefsMarkers: merges into the running map and clamps unit values
+const beliefsMap = new Map();
+applyBeliefsMarkers(beliefsMap, markers);
+applyBeliefsMarkers(beliefsMap, [
+  {
+    agent: "agent-a",
+    round: 2,
+    phase: "day",
+    suspicions: [{ target: "agent-d", p_wolf: 2.5, reasoning: "too high" }],
+    knowledge: [{ source: "claim", content: "agent-d claims seer", confidence: -1 }],
+  },
+]);
+const agentA = beliefsMap.get("agent-a");
+assert.equal(agentA.suspicions.length, 2);
+assert.equal(agentA.suspicions[1].p_wolf, 1);
+assert.equal(agentA.knowledge.length, 1);
+assert.equal(agentA.knowledge[0].confidence, 0);
+
+const agentC = beliefsMap.get("agent-c");
+assert.equal(agentC.suspicions.length, 0);
+assert.equal(agentC.knowledge.length, 1);
+assert.equal(agentC.knowledge[0].source, "deduction");
+
+assert.deepEqual(parseBeliefsMarkers(""), []);
+assert.deepEqual(parseBeliefsMarkers("nothing relevant here"), []);
+
+// serializeRefereeEvent: stable shape, leading ts, then kind, then payload
+const eventLine = serializeRefereeEvent(
+  { kind: "round-start", round: 1, alive: ["agent-a", "agent-b"] },
+  "2026-05-18T00:00:00.000Z",
+);
+assert.equal(
+  eventLine,
+  '{"ts":"2026-05-18T00:00:00.000Z","kind":"round-start","round":1,"alive":["agent-a","agent-b"]}\n',
+);
+assert.throws(() => serializeRefereeEvent(null), /must be an object/);
+assert.throws(() => serializeRefereeEvent({ round: 1 }), /must have a kind/);
+
+const gameIdA = newRefereeGameId("2026-05-18T12:34:56.000Z");
+assert.match(gameIdA, /^game-20260518T123456Z-[0-9a-f]{4}$/);
+
+// integration: write a few events to a tmp file, parse back, assert order/content
+const tmpDir = await mkdtemp(join(tmpdir(), "refereelog-"));
+try {
+  const logPath = join(tmpDir, "game.jsonl");
+  for (const evt of [
+    { kind: "game-start", game_id: "abc", players: ["agent-a"] },
+    { kind: "round-start", round: 1, alive: ["agent-a"] },
+    { kind: "lynch", round: 1, target: "agent-a", votes: 1, revealed_role: "wolf" },
+    { kind: "game-end", winner: "village", reason: "all wolves eliminated", rounds: 1 },
+  ]) {
+    await appendFile(logPath, serializeRefereeEvent(evt, "2026-05-18T00:00:00.000Z"));
+  }
+  const raw = await readFile(logPath, "utf8");
+  const lines = raw.trim().split("\n").map((line) => JSON.parse(line));
+  assert.equal(lines.length, 4);
+  assert.equal(lines[0].kind, "game-start");
+  assert.equal(lines[2].target, "agent-a");
+  assert.equal(lines[3].winner, "village");
+} finally {
+  await rm(tmpDir, { recursive: true, force: true });
+}
 
 console.log("ok - lab web action mapping");

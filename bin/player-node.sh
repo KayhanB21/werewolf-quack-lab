@@ -89,6 +89,14 @@ CREATE TABLE IF NOT EXISTS votes (
   decided_at TIMESTAMP NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS eliminations (
+  round INTEGER NOT NULL,
+  agent_id VARCHAR NOT NULL,
+  role VARCHAR NOT NULL,
+  cause VARCHAR NOT NULL,
+  decided_at TIMESTAMP NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS lab_secret (
   secret VARCHAR NOT NULL
 );
@@ -104,6 +112,7 @@ DELETE FROM knowledge;
 DELETE FROM suspicions;
 DELETE FROM intents;
 DELETE FROM votes;
+DELETE FROM eliminations;
 DELETE FROM lab_secret;
 DELETE FROM quack_scopes;
 
@@ -174,7 +183,7 @@ CREATE OR REPLACE MACRO lab_check_token(sid, client_token, server_token) AS (
 -- of the scope's allowed_identifiers. Private tables are always denied.
 CREATE OR REPLACE MACRO lab_authorize(sid, query) AS (
   regexp_matches(upper(regexp_replace(trim(query), '^/\*[^*]*\*/\s*', '', 'g')), '^(SELECT|FROM|WITH|EXPLAIN|DESCRIBE|SHOW)\b')
-  AND NOT regexp_matches(lower(query), '\b(self|intents|knowledge|suspicions|votes|game_flags|lab_secret|quack_scopes)\b')
+  AND NOT regexp_matches(lower(query), '\b(self|intents|knowledge|suspicions|votes|eliminations|game_flags|lab_secret|quack_scopes)\b')
   AND EXISTS (
     SELECT 1
     FROM quack_scopes s

@@ -606,4 +606,15 @@ SQL
   [[ -n "${knowledge_sql}" ]] && printf "%s\n" "${knowledge_sql}"
 } > "${ACTION_PIPE}"
 
+beliefs_marker="$(
+  jq -c -n \
+    --arg agent "${NODE_ID}" \
+    --arg phase "${PHASE}" \
+    --argjson round "${ROUND}" \
+    --argjson suspicions "$(jq -c '(.suspicions // []) | if type == "array" then .[:4] else [] end' <<<"${raw_turn_json}" 2>/dev/null || printf '[]')" \
+    --argjson knowledge "$(jq -c '(.knowledge // []) | if type == "array" then .[:4] else [] end' <<<"${raw_turn_json}" 2>/dev/null || printf '[]')" \
+    '{agent: $agent, phase: $phase, round: $round, suspicions: $suspicions, knowledge: $knowledge}'
+)"
+printf "__BELIEFS__ %s\n" "${beliefs_marker}"
+
 echo "[${NODE_ID}] wrote ${action} for phase=${PHASE}"
