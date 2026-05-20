@@ -18,8 +18,8 @@ SQL_PATH="${TMP_DIR}/authz.sql"
 
 # Pre-mint two tokens that share the secret and are known good/expired so we
 # can assert lab_check_token's exp check independently of the signature check.
-GOOD_TOKEN="$(LAB_QUACK_SECRET="${SECRET}" "${ROOT_DIR}/bin/mint-token.sh" public_log 60 gateway)"
-EXPIRED_TOKEN="$(LAB_QUACK_SECRET="${SECRET}" MINT_NOW=1 MINT_NONCE=fixed "${ROOT_DIR}/bin/mint-token.sh" public_log 60 gateway)"
+GOOD_TOKEN="$(LAB_QUACK_SECRET="${SECRET}" "${ROOT_DIR}/lib/mint-token.sh" public_log 60 gateway)"
+EXPIRED_TOKEN="$(LAB_QUACK_SECRET="${SECRET}" MINT_NOW=1 MINT_NONCE=fixed "${ROOT_DIR}/lib/mint-token.sh" public_log 60 gateway)"
 BAD_SIG_TOKEN="${GOOD_TOKEN%.*}.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 cat > "${SQL_PATH}" <<SQL

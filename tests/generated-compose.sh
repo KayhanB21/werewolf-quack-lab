@@ -26,7 +26,7 @@ cat > "${CONFIG_PATH}" <<'JSON'
 }
 JSON
 
-"${ROOT_DIR}/bin/generate-compose.sh" --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}" >/dev/null
+"${ROOT_DIR}/lib/generate-compose.sh" --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}" >/dev/null
 
 players_json="$(cat "${OUT_DIR}/players.json")"
 compose_yaml="$(cat "${OUT_DIR}/docker-compose.yml")"

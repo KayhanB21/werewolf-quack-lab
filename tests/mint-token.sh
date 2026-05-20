@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MINT="${ROOT_DIR}/bin/mint-token.sh"
+MINT="${ROOT_DIR}/lib/mint-token.sh"
 
 # Token shape: <b64>.<b64>
 token="$(LAB_QUACK_SECRET="testsecret" "${MINT}" public_log 60)"

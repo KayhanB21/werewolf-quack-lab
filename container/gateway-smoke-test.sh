@@ -15,7 +15,7 @@ EXPECTED_COUNT="${#PLAYER_HOSTS[@]}"
 EXPECTED_WOLF_COUNT="$(jq 'length' <<<"${EXPECTED_WOLVES}")"
 
 mint_token() {
-  LAB_QUACK_SECRET="${LAB_QUACK_SECRET}" /app/bin/mint-token.sh "$1" 60 gateway
+  LAB_QUACK_SECRET="${LAB_QUACK_SECRET}" /app/lib/mint-token.sh "$1" 60 gateway
 }
 
 duck_json() {

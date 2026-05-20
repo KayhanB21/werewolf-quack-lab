@@ -6,7 +6,7 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 # shellcheck source=/dev/null
-source "${ROOT_DIR}/bin/lab-span.sh"
+source "${ROOT_DIR}/lib/lab-span.sh"
 
 OUT="${TMP_DIR}/timeline.jsonl"
 

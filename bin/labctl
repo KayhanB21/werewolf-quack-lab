@@ -71,7 +71,7 @@ run_agent_action() {
   while IFS= read -r id; do
     [[ -z "${id}" ]] && continue
     echo "[labctl] ${id} acts in ${phase}"
-    compose exec -T "${id}" /app/bin/agent-act.sh --phase "${phase}" --round "${ROUND}" < /dev/null
+    compose exec -T "${id}" /app/container/agent-act.sh --phase "${phase}" --round "${ROUND}" < /dev/null
   done < <(players_matching "${filter}")
 }
 
@@ -104,7 +104,7 @@ run_one_agent_action() {
     -e "WOLF_CHANNEL_JSON=${WOLF_CHANNEL_JSON:-[]}" \
     -e "CONTEXT_JSON=${CONTEXT_JSON:-{\}}" \
     "${id}" \
-    /app/bin/agent-act.sh --phase "${phase}" --round "${ROUND}" < /dev/null
+    /app/container/agent-act.sh --phase "${phase}" --round "${ROUND}" < /dev/null
 }
 
 sql_quote() {
@@ -184,7 +184,7 @@ case "${1:-}" in
   query)
     ensure_generated
     query_name="${2:-public_log}"
-    compose exec gateway /app/bin/gateway-query.sh "${query_name}"
+    compose exec gateway /app/container/gateway-query.sh "${query_name}"
     ;;
   timeline)
     ensure_generated
@@ -209,7 +209,7 @@ case "${1:-}" in
     compose up --build -d --force-recreate
     run_agent_action "day" '.[].id'
     run_agent_action "wolf" '.[] | select(.role == "wolf") | .id'
-    compose exec -T gateway /app/bin/gateway-smoke-test.sh
+    compose exec -T gateway /app/container/gateway-smoke-test.sh
     ;;
   config)
     ensure_generated

@@ -32,7 +32,7 @@ run_action() {
     WOLF_CHANNEL_JSON="${WOLF_CHANNEL_JSON:-[]}" \
     PATH="${test_path}" \
     ACTION_PIPE="${pipe_path}" \
-    "${ROOT_DIR}/bin/agent-act.sh" --phase "${phase}" --round 2 >/dev/null
+    "${ROOT_DIR}/container/agent-act.sh" --phase "${phase}" --round 2 >/dev/null
 
   wait "${reader_pid}"
 }
@@ -155,7 +155,7 @@ env \
   PLAYER_IDS="agent-a,agent-b,agent-d" \
   LLM_PROVIDER="stub" \
   ACTION_PIPE="${seer_wrong_role_sql}.fifo" \
-  "${ROOT_DIR}/bin/agent-act.sh" --phase "seer" --round 2 >/dev/null &
+  "${ROOT_DIR}/container/agent-act.sh" --phase "seer" --round 2 >/dev/null &
 agent_pid="$!"
 sleep 0.5
 if kill -0 "${agent_pid}" 2>/dev/null; then
@@ -390,7 +390,7 @@ env \
   WOLF_CHANNEL_JSON='[]' \
   PATH="${fake_bin}:${PATH}" \
   ACTION_PIPE="${marker_pipe}" \
-  "${ROOT_DIR}/bin/agent-act.sh" --phase "day" --round 3 >"${marker_stdout}"
+  "${ROOT_DIR}/container/agent-act.sh" --phase "day" --round 3 >"${marker_stdout}"
 
 wait "${marker_reader_pid}"
 
@@ -412,6 +412,136 @@ fi
 if ! jq -e '.suspicions[0].target == "agent-b" and .knowledge[0].source == "behavior"' >/dev/null <<<"${marker_json}"; then
   echo "marker JSON should carry suspicions and knowledge payloads" >&2
   printf '%s\n' "${marker_json}" >&2
+  exit 1
+fi
+
+if ! grep -Fq "__TURN_STATS__" "${marker_stdout}"; then
+  echo "agent-act should emit a __TURN_STATS__ marker line to stdout" >&2
+  cat "${marker_stdout}" >&2
+  exit 1
+fi
+
+stats_line="$(grep -F "__TURN_STATS__" "${marker_stdout}" | tail -n1)"
+stats_json="${stats_line#*__TURN_STATS__ }"
+
+if ! jq -e '
+  .agent == "agent-a"
+  and .role == "villager"
+  and .phase == "day"
+  and .round == 3
+  and .provider == "openai-compatible"
+  and .parse_path == "object"
+  and .valid_json == true
+  and .action_in_phase == true
+  and .normalized_action == "speak"
+  and .suspicions_count == 1
+  and .knowledge_count == 1
+  and (.tokens | type == "object")
+  and (.latency_ms | type == "number")
+  and (.reasoning_content == "")
+' >/dev/null <<<"${stats_json}"; then
+  echo "turn-stats marker JSON missing expected fields" >&2
+  printf '%s\n' "${stats_json}" >&2
+  exit 1
+fi
+
+stats_text_sql="${TMP_DIR}/stats-text.sql"
+stats_text_pipe="${stats_text_sql}.fifo"
+stats_text_stdout="${TMP_DIR}/stats-text.stdout"
+mkfifo "${stats_text_pipe}"
+cat "${stats_text_pipe}" > "${stats_text_sql}" &
+stats_text_reader_pid="$!"
+
+env \
+  NODE_ID="agent-a" \
+  ROLE="villager" \
+  PARTNERS="" \
+  PLAYER_IDS="agent-a,agent-b,agent-d" \
+  LLM_PROVIDER="openai-compatible" \
+  LLM_BASE_URL="http://fake-openai.local/v1" \
+  FAKE_TURN_CONTENT='I think we should vote agent-b this round.' \
+  CONTEXT_JSON='{}' \
+  WOLF_CHANNEL_JSON='[]' \
+  PATH="${fake_bin}:${PATH}" \
+  ACTION_PIPE="${stats_text_pipe}" \
+  "${ROOT_DIR}/container/agent-act.sh" --phase "day" --round 4 >"${stats_text_stdout}"
+
+wait "${stats_text_reader_pid}"
+
+stats_text_line="$(grep -F "__TURN_STATS__" "${stats_text_stdout}" | tail -n1)"
+stats_text_json="${stats_text_line#*__TURN_STATS__ }"
+
+if ! jq -e '.parse_path == "text" and .valid_json == false and .action_in_phase == true' >/dev/null <<<"${stats_text_json}"; then
+  echo "prose-fallback turn-stats should record parse_path=text valid_json=false" >&2
+  printf '%s\n' "${stats_text_json}" >&2
+  exit 1
+fi
+
+stats_stub_sql="${TMP_DIR}/stats-stub.sql"
+stats_stub_pipe="${stats_stub_sql}.fifo"
+stats_stub_stdout="${TMP_DIR}/stats-stub.stdout"
+mkfifo "${stats_stub_pipe}"
+cat "${stats_stub_pipe}" > "${stats_stub_sql}" &
+stats_stub_reader_pid="$!"
+
+env \
+  NODE_ID="agent-a" \
+  ROLE="seer" \
+  PARTNERS="" \
+  PLAYER_IDS="agent-a,agent-b,agent-d" \
+  LLM_PROVIDER="stub" \
+  ACTION_PIPE="${stats_stub_pipe}" \
+  "${ROOT_DIR}/container/agent-act.sh" --phase "seer" --round 2 >"${stats_stub_stdout}"
+
+wait "${stats_stub_reader_pid}"
+
+stats_stub_line="$(grep -F "__TURN_STATS__" "${stats_stub_stdout}" | tail -n1)"
+stats_stub_json="${stats_stub_line#*__TURN_STATS__ }"
+
+if ! jq -e '
+  .provider == "stub"
+  and .parse_path == "stub"
+  and .normalized_action == "seer-investigate"
+  and .action_in_phase == true
+  and .tokens.prompt == 0
+  and .tokens.completion == 0
+' >/dev/null <<<"${stats_stub_json}"; then
+  echo "stub provider turn-stats should record parse_path=stub and zero tokens" >&2
+  printf '%s\n' "${stats_stub_json}" >&2
+  exit 1
+fi
+
+stats_thinking_sql="${TMP_DIR}/stats-thinking.sql"
+stats_thinking_pipe="${stats_thinking_sql}.fifo"
+stats_thinking_stdout="${TMP_DIR}/stats-thinking.stdout"
+thinking_payload="${TMP_DIR}/thinking.payload"
+mkfifo "${stats_thinking_pipe}"
+cat "${stats_thinking_pipe}" > "${stats_thinking_sql}" &
+stats_thinking_reader_pid="$!"
+
+env \
+  NODE_ID="agent-a" \
+  ROLE="villager" \
+  PARTNERS="" \
+  PLAYER_IDS="agent-a,agent-b,agent-d" \
+  LLM_PROVIDER="omlx" \
+  LLM_BASE_URL="http://fake-openai.local/v1" \
+  LLM_THINKING_BUDGET="400" \
+  LLM_TEMPERATURE="0.1" \
+  LLM_MAX_TOKENS="600" \
+  FAKE_TURN_CONTENT='{"action":"speak","target":"","public_text":"hi.","rationale":"r."}' \
+  FAKE_CURL_PAYLOAD_PATH="${thinking_payload}" \
+  CONTEXT_JSON='{}' \
+  WOLF_CHANNEL_JSON='[]' \
+  PATH="${fake_bin}:${PATH}" \
+  ACTION_PIPE="${stats_thinking_pipe}" \
+  "${ROOT_DIR}/container/agent-act.sh" --phase "day" --round 1 >"${stats_thinking_stdout}"
+
+wait "${stats_thinking_reader_pid}"
+
+if ! jq -e '.thinking_budget == 400 and .temperature == 0.1 and .max_tokens == 600' >/dev/null <<<"$(cat "${thinking_payload}")"; then
+  echo "thinking_budget, temperature, max_tokens should be threaded into the payload" >&2
+  cat "${thinking_payload}" >&2
   exit 1
 fi
 

@@ -26,11 +26,12 @@ RUN set -eux; \
 
 WORKDIR /app
 
-COPY bin/ /app/bin/
+COPY container/ /app/container/
+COPY lib/ /app/lib/
 COPY sql/ /app/sql/
 COPY docs/ /app/docs/
 
-RUN chmod +x /app/bin/*.sh
+RUN chmod +x /app/container/*.sh /app/lib/*.sh
 
 ENV DUCKDB_BIN=/usr/local/bin/duckdb
 ENV DATA_DIR=/data

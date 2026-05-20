@@ -10,9 +10,36 @@ LLM_MODEL="${LLM_MODEL:-stub-werewolf-v1}"
 LLM_BASE_URL="${LLM_BASE_URL:-https://api.openai.com/v1}"
 LLM_API_KEY="${LLM_API_KEY:-}"
 LLM_TIMEOUT_SECONDS="${LLM_TIMEOUT_SECONDS:-60}"
+LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-260}"
+LLM_THINKING_BUDGET="${LLM_THINKING_BUDGET:-}"
+LLM_TEMPERATURE="${LLM_TEMPERATURE:-0.2}"
+LLM_REASONING_LOG_LIMIT="${LLM_REASONING_LOG_LIMIT:-1200}"
 ACTION_PIPE="${ACTION_PIPE:-/tmp/${NODE_ID}-duckdb.fifo}"
 PHASE="day"
 ROUND="1"
+
+STATS_FILE="$(mktemp -t agent-act-stats.XXXXXX)"
+trap 'rm -f "${STATS_FILE}"' EXIT
+
+stats_set() {
+  local key="$1" value="$2"
+  printf '%s\t%s\n' "${key}" "${value}" >> "${STATS_FILE}"
+}
+
+stats_get() {
+  local key="$1" default="${2:-}"
+  local v
+  v="$(awk -F'\t' -v k="${key}" '$1 == k { val=$0; sub("^[^\t]*\t","",val) } END { print val }' "${STATS_FILE}" 2>/dev/null)"
+  if [[ -z "${v}" ]]; then
+    printf '%s' "${default}"
+  else
+    printf '%s' "${v}"
+  fi
+}
+
+now_ms_py() {
+  python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || echo $(( $(date +%s) * 1000 ))
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -267,6 +294,9 @@ model_content_turn_json() {
   local content="$1"
 
   if jq -e 'type == "object"' >/dev/null 2>&1 <<<"${content}"; then
+    stats_set parse_path "object"
+    stats_set valid_json "true"
+    stats_set raw_action "$(jq -r '.action // ""' <<<"${content}" 2>/dev/null || true)"
     jq -c '
       {
         action: (.action // "speak"),
@@ -281,6 +311,8 @@ model_content_turn_json() {
     return 0
   fi
 
+  stats_set parse_path "text"
+  stats_set valid_json "false"
   text_turn_json "${content}"
 }
 
@@ -341,6 +373,8 @@ The word JSON is required. Keep rationale honest and private. Keep public_text c
   payload="$(
     jq -n \
       --arg model "${LLM_MODEL}" \
+      --argjson max_tokens "${LLM_MAX_TOKENS}" \
+      --argjson temperature "${LLM_TEMPERATURE}" \
       --arg system "${system_text}" \
       --arg node "${NODE_ID}" \
       --arg role "${ROLE}" \
@@ -349,10 +383,11 @@ The word JSON is required. Keep rationale honest and private. Keep public_text c
       --arg round "${ROUND}" \
       --arg wolf_channel "${wolf_channel}" \
       --arg context "${context_json}" \
+      --arg thinking_budget "${LLM_THINKING_BUDGET}" \
       '{
         model: $model,
-        temperature: 0.2,
-        max_tokens: 260,
+        temperature: $temperature,
+        max_tokens: $max_tokens,
         response_format: {type: "json_object"},
         messages: [
           {
@@ -364,7 +399,8 @@ The word JSON is required. Keep rationale honest and private. Keep public_text c
             content: ("Return JSON for this turn.\nagent=" + $node + "\nrole=" + $role + "\npartners=" + $partners + "\nphase=" + $phase + "\nround=" + $round + "\ncontext=" + $context + "\nwolf_channel=" + $wolf_channel)
           }
         ]
-      }'
+      }
+      + (if $thinking_budget == "" then {} else {thinking_budget: ($thinking_budget | tonumber)} end)'
   )"
 
   curl_args=(
@@ -377,8 +413,32 @@ The word JSON is required. Keep rationale honest and private. Keep public_text c
     curl_args+=(-H "Authorization: Bearer ${LLM_API_KEY}")
   fi
 
-  local response content
-  response="$(curl "${curl_args[@]}")"
+  local start_ms end_ms response content curl_rc
+  start_ms="$(now_ms_py)"
+  response="$(curl "${curl_args[@]}" 2>/dev/null)" || curl_rc=$?
+  curl_rc="${curl_rc:-0}"
+  end_ms="$(now_ms_py)"
+  stats_set latency_ms "$(( end_ms - start_ms ))"
+
+  if [[ "${curl_rc}" != "0" || -z "${response}" ]]; then
+    echo "[${NODE_ID}] LLM HTTP error (curl rc=${curl_rc})" >&2
+    stats_set parse_path "http-error"
+    stats_set valid_json "false"
+    stats_set http_status "error"
+    text_turn_json ""
+    return 0
+  fi
+  stats_set http_status "200"
+
+  stats_set finish_reason "$(jq -r '.choices[0].finish_reason // ""' <<<"${response}" 2>/dev/null || true)"
+  stats_set prompt_tokens "$(jq -r '.usage.prompt_tokens // .usage.input_tokens // 0' <<<"${response}" 2>/dev/null || echo 0)"
+  stats_set completion_tokens "$(jq -r '.usage.completion_tokens // .usage.output_tokens // 0' <<<"${response}" 2>/dev/null || echo 0)"
+  stats_set reasoning_tokens "$(jq -r '.usage.completion_tokens_details.reasoning_tokens // 0' <<<"${response}" 2>/dev/null || echo 0)"
+
+  local reasoning_full
+  reasoning_full="$(jq -r '.choices[0].message.reasoning_content // ""' <<<"${response}" 2>/dev/null || true)"
+  stats_set reasoning_content "${reasoning_full:0:${LLM_REASONING_LOG_LIMIT}}"
+
   content="$(jq -r '.choices[0].message.content // empty' <<<"${response}")"
   model_content_turn_json "${content}"
 }
@@ -505,9 +565,13 @@ wait_for_pipe() {
 
 case "${LLM_PROVIDER}" in
   stub)
+    stats_set parse_path "stub"
+    stats_set valid_json "true"
     turn_json="$(stub_turn_json)"
+    stats_set raw_action "$(jq -r '.action // ""' <<<"${turn_json}")"
     ;;
   openai|openai-compatible|omlx)
+    stats_set parse_path "pending"
     turn_json="$(openai_turn_json)"
     ;;
   *)
@@ -616,5 +680,74 @@ beliefs_marker="$(
     '{agent: $agent, phase: $phase, round: $round, suspicions: $suspicions, knowledge: $knowledge}'
 )"
 printf "__BELIEFS__ %s\n" "${beliefs_marker}"
+
+action_legal_for_phase() {
+  local act="$1" phase="$2" role="$3"
+  case "${phase}" in
+    day) [[ "${act}" =~ ^(speak|accuse|investigate)$ ]] && return 0 || return 1 ;;
+    vote) [[ "${act}" == "vote" ]] && return 0 || return 1 ;;
+    wolf) [[ "${role}" == "wolf" && ( "${act}" == "wolf-kill" || "${act}" == "wolf-done" ) ]] && return 0 || return 1 ;;
+    seer) [[ "${role}" == "seer" && "${act}" == "seer-investigate" ]] && return 0 || return 1 ;;
+    doctor) [[ "${role}" == "doctor" && "${act}" == "doctor-save" ]] && return 0 || return 1 ;;
+    *) return 1 ;;
+  esac
+}
+
+action_in_phase="false"
+if action_legal_for_phase "${action}" "${PHASE}" "${ROLE}"; then
+  action_in_phase="true"
+fi
+
+stats_parse_path="$(stats_get parse_path stub)"
+stats_valid_json="$(stats_get valid_json false)"
+stats_raw_action="$(stats_get raw_action "${action}")"
+[[ -z "${stats_raw_action}" ]] && stats_raw_action="${action}"
+stats_finish_reason="$(stats_get finish_reason "")"
+stats_http_status="$(stats_get http_status "")"
+stats_prompt_tokens="$(stats_get prompt_tokens 0)"
+stats_completion_tokens="$(stats_get completion_tokens 0)"
+stats_reasoning_tokens="$(stats_get reasoning_tokens 0)"
+stats_latency_ms="$(stats_get latency_ms 0)"
+stats_reasoning_content="$(stats_get reasoning_content "")"
+
+suspicions_count="$(jq -r '(.suspicions // []) | if type == "array" then (.[:4] | length) else 0 end' <<<"${raw_turn_json}" 2>/dev/null || echo 0)"
+knowledge_count="$(jq -r '(.knowledge // []) | if type == "array" then (.[:4] | length) else 0 end' <<<"${raw_turn_json}" 2>/dev/null || echo 0)"
+
+turn_stats_marker="$(
+  jq -c -n \
+    --arg agent "${NODE_ID}" \
+    --arg role "${ROLE}" \
+    --arg phase "${PHASE}" \
+    --argjson round "${ROUND}" \
+    --arg provider "${LLM_PROVIDER}" \
+    --arg model "${LLM_MODEL}" \
+    --arg parse_path "${stats_parse_path}" \
+    --argjson valid_json "${stats_valid_json}" \
+    --arg raw_action "${stats_raw_action}" \
+    --arg normalized_action "${action}" \
+    --argjson action_in_phase "${action_in_phase}" \
+    --arg finish_reason "${stats_finish_reason}" \
+    --arg http_status "${stats_http_status}" \
+    --argjson prompt_tokens "${stats_prompt_tokens:-0}" \
+    --argjson completion_tokens "${stats_completion_tokens:-0}" \
+    --argjson reasoning_tokens "${stats_reasoning_tokens:-0}" \
+    --argjson latency_ms "${stats_latency_ms:-0}" \
+    --argjson suspicions_count "${suspicions_count:-0}" \
+    --argjson knowledge_count "${knowledge_count:-0}" \
+    --arg reasoning_content "${stats_reasoning_content}" \
+    '{
+      agent: $agent, role: $role, phase: $phase, round: $round,
+      provider: $provider, model: $model,
+      parse_path: $parse_path, valid_json: $valid_json,
+      raw_action: $raw_action, normalized_action: $normalized_action,
+      action_in_phase: $action_in_phase,
+      finish_reason: $finish_reason, http_status: $http_status,
+      tokens: {prompt: $prompt_tokens, completion: $completion_tokens, reasoning: $reasoning_tokens},
+      latency_ms: $latency_ms,
+      suspicions_count: $suspicions_count, knowledge_count: $knowledge_count,
+      reasoning_content: $reasoning_content
+    }'
+)"
+printf "__TURN_STATS__ %s\n" "${turn_stats_marker}"
 
 echo "[${NODE_ID}] wrote ${action} for phase=${PHASE}"

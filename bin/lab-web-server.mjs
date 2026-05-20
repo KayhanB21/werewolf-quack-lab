@@ -16,11 +16,12 @@ import {
   listActions,
   newRefereeGameId,
   parseBeliefsMarkers,
+  parseTurnStatsMarkers,
   resolveLynch,
   resolveNightOutcome,
   serializeRefereeEvent,
   toHostModelUrl,
-} from "./lab-web-actions.mjs";
+} from "../lib/lab-web-actions.mjs";
 import { extractJsonArrays } from "../web/flow.mjs";
 
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -286,6 +287,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
   let winner = "";
   let reason = "";
   const maxRounds = clampInt(body.maxRounds, 8, 1, 20);
+  const wolfRotationCap = clampInt(body.wolfRotationCap, 3, 1, 6);
 
   const gameId = newRefereeGameId();
   const gamesDir = path.join(GENERATED_DIR, "games");
@@ -355,6 +357,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
       shouldAbort,
       isClosed,
       beliefsByAgent,
+      logEvent,
     );
     if (!discussionOk) return false;
 
@@ -386,6 +389,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
       shouldAbort,
       isClosed,
       beliefsByAgent,
+      logEvent,
     );
     if (!voteOk) return false;
 
@@ -463,8 +467,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
 
     const liveWolves = alive.filter((id) => roles.get(id) === "wolf");
     const wolfRotationRows = [];
-    const MAX_WOLF_ROTATIONS = 3;
-    for (let rotation = 1; rotation <= MAX_WOLF_ROTATIONS; rotation += 1) {
+    for (let rotation = 1; rotation <= wolfRotationCap; rotation += 1) {
       const wolfEnv = envForId("night-wolf", round, roundEnv, {
         WOLF_CHANNEL_JSON: JSON.stringify(wolfRotationRows),
       });
@@ -477,6 +480,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
         shouldAbort,
         isClosed,
         beliefsByAgent,
+        logEvent,
       );
       if (!wolfOk) return false;
 
@@ -518,6 +522,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
       shouldAbort,
       isClosed,
       beliefsByAgent,
+      logEvent,
     );
     if (!doctorOk) return false;
 
@@ -544,6 +549,7 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
       shouldAbort,
       isClosed,
       beliefsByAgent,
+      logEvent,
     );
     if (!seerOk) return false;
 
@@ -704,7 +710,17 @@ async function runAutoGame(body, env, res, shouldAbort, isClosed) {
   return true;
 }
 
-async function runAgentPhase(command, ids, phase, envOrFn, res, shouldAbort, isClosed, beliefsByAgent) {
+async function runAgentPhase(
+  command,
+  ids,
+  phase,
+  envOrFn,
+  res,
+  shouldAbort,
+  isClosed,
+  beliefsByAgent,
+  logEvent,
+) {
   writeEvent(res, "step", { command });
   const getEnv = typeof envOrFn === "function" ? envOrFn : () => envOrFn;
 
@@ -719,6 +735,11 @@ async function runAgentPhase(command, ids, phase, envOrFn, res, shouldAbort, isC
     );
     if (beliefsByAgent) {
       applyBeliefsMarkers(beliefsByAgent, parseBeliefsMarkers(stdout));
+    }
+    if (logEvent) {
+      for (const stats of parseTurnStatsMarkers(stdout)) {
+        await logEvent({ kind: "turn-stats", ...stats });
+      }
     }
     if (code !== 0) {
       writeEvent(res, "exit", { code, signal: null });

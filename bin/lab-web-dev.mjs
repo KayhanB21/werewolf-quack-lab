@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const SERVER_ENTRY = "bin/lab-web-server.mjs";
-const WATCH_ROOTS = ["bin", "web", "sql", "config", "Dockerfile", "docker-compose.yml", "Makefile"];
+const WATCH_ROOTS = ["bin", "lib", "container", "eval", "web", "sql", "config", "Dockerfile", "docker-compose.yml", "Makefile"];
 const POLL_INTERVAL_MS = Number(process.env.LAB_WEB_POLL_MS || 500);
 const IGNORED_DIRS = new Set([".git", ".generated", "node_modules"]);
 const WATCH_EXTENSIONS = new Set([

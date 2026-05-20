@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lab-span.sh"
 
 mapfile -t PLAYER_HOSTS < <(jq -r '.[].id' <<<"${PLAYERS_JSON}")
-TOKEN="$(LAB_QUACK_SECRET="${LAB_QUACK_SECRET}" /app/bin/mint-token.sh "${QUERY_NAME}" 60 gateway)"
+TOKEN="$(LAB_QUACK_SECRET="${LAB_QUACK_SECRET}" /app/lib/mint-token.sh "${QUERY_NAME}" 60 gateway)"
 SCOPE_TAG="/* scope: ${QUERY_NAME} */ "
 START_MS="$(span_now_ms)"
 HOSTS_CSV="$(IFS=,; printf "%s" "${PLAYER_HOSTS[*]}")"

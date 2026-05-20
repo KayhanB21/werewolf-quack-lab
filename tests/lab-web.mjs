@@ -13,11 +13,12 @@ import {
   listActions,
   newRefereeGameId,
   parseBeliefsMarkers,
+  parseTurnStatsMarkers,
   resolveLynch,
   resolveNightOutcome,
   serializeRefereeEvent,
   toHostModelUrl,
-} from "./lab-web-actions.mjs";
+} from "../lib/lab-web-actions.mjs";
 import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +26,7 @@ import { extractJsonArrays, summarizeStep } from "../web/flow.mjs";
 
 const html = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
 const makefile = readFileSync(new URL("../Makefile", import.meta.url), "utf8");
-const devRunner = readFileSync(new URL("./lab-web-dev.mjs", import.meta.url), "utf8");
+const devRunner = readFileSync(new URL("../bin/lab-web-dev.mjs", import.meta.url), "utf8");
 assert.match(html, /value="stub" checked/);
 assert.match(html, />Scripted</);
 assert.match(html, /data-download/);
@@ -446,6 +447,51 @@ assert.equal(agentC.knowledge[0].source, "deduction");
 
 assert.deepEqual(parseBeliefsMarkers(""), []);
 assert.deepEqual(parseBeliefsMarkers("nothing relevant here"), []);
+
+// parseTurnStatsMarkers: pulls every __TURN_STATS__ line, normalises types,
+// tolerates garbage between lines.
+const stubStats = '{"agent":"a","role":"villager","phase":"day","round":2,"provider":"stub","model":"stub-werewolf-v1","parse_path":"stub","valid_json":true,"raw_action":"speak","normalized_action":"speak","action_in_phase":true,"finish_reason":"","http_status":"","tokens":{"prompt":0,"completion":0,"reasoning":0},"latency_ms":3,"suspicions_count":0,"knowledge_count":0,"reasoning_content":""}';
+const realStats = '{"agent":"b","role":"wolf","phase":"day","round":2,"provider":"omlx","model":"qwen","parse_path":"object","valid_json":true,"raw_action":"speak","normalized_action":"speak","action_in_phase":true,"finish_reason":"stop","http_status":"200","tokens":{"prompt":659,"completion":358,"reasoning":120},"latency_ms":8858,"suspicions_count":1,"knowledge_count":0,"reasoning_content":"I should blend in."}';
+const turnStatsStdout = [
+  "[a] writes speak in phase=day",
+  `__TURN_STATS__ ${stubStats}`,
+  "[b] writes speak in phase=day",
+  "garbage line",
+  `__TURN_STATS__ ${realStats}`,
+  "__TURN_STATS__ {not-json",
+  "__TURN_STATS__ ",
+].join("\n");
+const turnStats = parseTurnStatsMarkers(turnStatsStdout);
+assert.equal(turnStats.length, 2);
+assert.equal(turnStats[0].agent, "a");
+assert.equal(turnStats[0].parse_path, "stub");
+assert.equal(turnStats[0].valid_json, true);
+assert.equal(turnStats[0].action_in_phase, true);
+assert.equal(turnStats[0].tokens.prompt, 0);
+assert.equal(turnStats[1].agent, "b");
+assert.equal(turnStats[1].provider, "omlx");
+assert.equal(turnStats[1].tokens.prompt, 659);
+assert.equal(turnStats[1].tokens.reasoning, 120);
+assert.equal(turnStats[1].reasoning_content, "I should blend in.");
+
+// type coercion: missing fields default sensibly
+const minimal = parseTurnStatsMarkers('__TURN_STATS__ {"agent":"x"}');
+assert.equal(minimal.length, 1);
+assert.equal(minimal[0].role, "");
+assert.equal(minimal[0].round, 0);
+assert.equal(minimal[0].valid_json, false);
+assert.equal(minimal[0].action_in_phase, false);
+assert.equal(minimal[0].tokens.prompt, 0);
+assert.equal(minimal[0].tokens.completion, 0);
+assert.equal(minimal[0].tokens.reasoning, 0);
+assert.equal(minimal[0].latency_ms, 0);
+
+// dropping markers with no agent
+assert.deepEqual(parseTurnStatsMarkers('__TURN_STATS__ {"role":"villager"}'), []);
+
+// empty inputs return empty
+assert.deepEqual(parseTurnStatsMarkers(""), []);
+assert.deepEqual(parseTurnStatsMarkers("nothing here\nstill nothing"), []);
 
 // serializeRefereeEvent: stable shape, leading ts, then kind, then payload
 const eventLine = serializeRefereeEvent(

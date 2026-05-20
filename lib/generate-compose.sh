@@ -114,7 +114,7 @@ while IFS= read -r player; do
       context: .
       args:
         DUCKDB_VERSION: \${DUCKDB_VERSION:-v1.5.2}
-    command: ["/app/bin/player-node.sh"]
+    command: ["/app/container/player-node.sh"]
     hostname: ${id}
     environment:
       NODE_ID: ${id}
