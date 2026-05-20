@@ -122,7 +122,7 @@ For production-like scoping:
 - Keep safe views as defense in depth.
 - Add tests that prove caller-specific policy, not only local role-based policy.
 
-## Phase 6: Browser Post Integration
+## Phase 7: Browser Post Integration
 
 - Add a "Connect to Quack Lab" mode in the post.
 - Detect the local controller on `localhost`.
@@ -130,7 +130,7 @@ For production-like scoping:
 - Let the post link to exported lab JSON.
 - Keep browser-only mode as the default portable demo.
 
-## Phase 7: Hosted Ephemeral Labs
+## Phase 8: Hosted Ephemeral Labs
 
 - Launch short-lived Quack node groups per reader.
 - Put a reverse proxy in front of every Quack server.

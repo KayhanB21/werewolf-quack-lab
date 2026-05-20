@@ -1,5 +1,39 @@
 # Eval framework plan
 
+## Status: what's landed (2026-05-19)
+
+The eval framework is now built and tested. Highlights:
+
+- **Per-turn instrumentation** in `container/agent-act.sh`: each agent turn
+  emits a `__TURN_STATS__ <json>` marker on stdout. The orchestrator parses
+  it (`parseTurnStatsMarkers` in `lib/lab-web-actions.mjs`) and appends a
+  `turn-stats` event to the durable JSONL log.
+- **Reasoning capture**: omlx's `reasoning_content` is captured separately
+  from the answer JSON. Setting `LLM_THINKING_BUDGET=400` (or higher) is
+  what makes Qwen3.5-DeepSeek-V4-Flash-4bit usable end-to-end — without
+  the budget the model loops on CoT indefinitely. Tested at ~9 s per turn
+  with clean JSON.
+- **Aggregator** (`eval/aggregate.mjs`): pure module + CLI. Scorecard
+  covers prompt-following, game-shape, belief-quality, and performance.
+- **Batch runner** (`eval/run.mjs`): drives N games against `/api/run`,
+  collects durable logs into `eval/runs/<profile>-<stamp>/`, writes
+  `scorecard.json`.
+- **Profiles**: `eval/profiles/stub-smoke.json` (3-game pipeline sanity)
+  and `eval/profiles/omlx-qwen35.json` (10-game Qwen3.5 with
+  `thinking_budget=400`).
+- **Tests**: `tests/eval-aggregate.mjs` and `tests/eval-run.mjs` cover
+  metric correctness, edge cases (empty / malformed / missing fields),
+  end-to-end via mock HTTP, and HTTP failure paths.
+
+**Not yet built (in this plan but deferred):** promptfoo wiring, the
+Anthropic provider branch in `container/agent-act.sh`, LLM-as-judge
+deception metrics, `eval/baselines/` committed reference scorecards,
+larger-N profiles.
+
+The rest of this document is the original design discussion — useful for
+understanding why we chose this architecture and what's planned for the
+deception-judge and hosted-provider phases.
+
 ## Prior art survey (2024–2026)
 
 Before building a custom framework, surveyed what already exists.
@@ -39,14 +73,14 @@ The right shape for *this* project is:
    - Each provider (stub / omlx / openai / anthropic) is a
      [promptfoo custom provider](https://www.promptfoo.dev/docs/providers/custom-api/)
      defined in YAML. The "provider" simply POSTs to our local
-     `/api/run` (or to `bin/eval-run.mjs`) and returns the path to the
+     `/api/run` (or to `eval/run.mjs`) and returns the path to the
      durable JSONL.
    - promptfoo handles: iteration count, parallelism, per-provider
      output capture, diff-vs-baseline view, the CLI ergonomics, and the
      html report. We do not reinvent any of that.
    - One YAML config (`eval/promptfooconfig.yaml`) describes the matrix
      of provider × profile × game-count.
-2. **Custom `bin/eval-aggregate.mjs` for game-specific metrics.**
+2. **Custom `eval/aggregate.mjs` for game-specific metrics.**
    - promptfoo's per-output assertions cannot compute "did the seer's
      investigation hit a wolf?" or "what was the wolf consensus
      rotation?". Those require joining the durable log against the
@@ -69,7 +103,7 @@ account, no fork of a research benchmark.
 
 ## Why this is needed
 
-Every test in `bin/*-test.sh` and `bin/lab-web-test.mjs` exercises one of:
+Every test in `tests/*.sh` and `tests/lab-web.mjs` exercises one of:
 
 - the `stub` LLM provider (scripted, no real model),
 - a fake `curl` shim that returns a hard-coded JSON object,
@@ -102,7 +136,7 @@ Why this shape:
   run N=50 games before each release without budgeting; reproducible
   pinned weights; offline; matches the post's thesis ("federated
   multi-agent on local infra"). The stack already wires it
-  (`bin/lab-web-actions.mjs` uses the host bridge URL
+  (`lib/lab-web-actions.mjs` uses the host bridge URL
   `http://host.docker.internal:8000/v1` and a 180s timeout).
 - **Real hosted LLMs because they are the comparison that matters.**
   "How close does the local 7B model come to gpt-4o-mini / Claude
@@ -124,7 +158,7 @@ Concretely the eval framework supports four providers:
 | anthropic| `anthropic` (new)    | `https://api.anthropic.com/v1`          | Hosted; gated on `ANTHROPIC_API_KEY`; **requires a new provider path in `agent-act.sh`** since Claude's chat API is not OpenAI-compatible |
 
 The Anthropic path is the only new-code chunk on the agent side. Plan it
-as a small module `bin/agent-act-anthropic.sh` (or a switch inside
+as a small module `container/agent-act-anthropic.sh` (or a switch inside
 `agent-act.sh`) that translates the same system + user messages into
 Claude's `/messages` request, uses prompt caching for the system block,
 and parses `content[0].text` as the JSON object. Everything downstream
@@ -257,7 +291,7 @@ needed; the aggregator just joins on `game-start.players`.
 
 ## Aggregator design
 
-New file `bin/eval-aggregate.mjs`. Pure function `aggregate(games)` where
+New file `eval/aggregate.mjs`. Pure function `aggregate(games)` where
 `games` is an array of arrays of parsed JSONL events. Returns:
 
 ```ts
@@ -296,7 +330,7 @@ New file `bin/eval-aggregate.mjs`. Pure function `aggregate(games)` where
 The function is deterministic and pure so it can be unit tested with
 synthetic JSONL fixtures.
 
-CLI mode: `bin/eval-aggregate.mjs <glob>` walks the matching JSONL files,
+CLI mode: `eval/aggregate.mjs <glob>` walks the matching JSONL files,
 parses each line, and prints the scorecard to stdout. `--json` flag emits
 the machine-readable structure for diffing.
 
@@ -348,7 +382,7 @@ function. The module's only job is:
 2. POST it to the already-running lab UI on `LAB_WEB_PORT` `/api/run`.
    Loop for `games` iterations or fan out in parallel.
 3. Collect the durable-log paths from each game's response.
-4. Pass the parsed events to `bin/eval-aggregate.mjs#aggregate` and
+4. Pass the parsed events to `eval/aggregate.mjs#aggregate` and
    return the scorecard. promptfoo treats this as the "output" of the
    provider for that test row.
 
@@ -394,7 +428,7 @@ Profiles to ship:
 
 ## Test strategy for the eval code itself
 
-All in `bin/eval-aggregate-test.mjs`:
+All in `tests/eval-aggregate.mjs`:
 
 1. Empty input → all rates `null` / counts zero, no NaN.
 2. Synthetic two-game JSONL fixtures stored under `eval/fixtures/`:
@@ -409,7 +443,7 @@ All in `bin/eval-aggregate-test.mjs`:
    change the aggregated result (events are commutative for the metrics
    we compute).
 
-For `bin/eval-run.mjs`:
+For `eval/run.mjs`:
 
 - Unit test the profile loader (`loadProfile`) against valid + invalid
   files.
@@ -421,37 +455,48 @@ For `bin/eval-run.mjs`:
 
 ```
 etc/post-013/werewolf-quack-lab/
-  bin/
-    eval-aggregate.mjs           # pure aggregator + CLI
-    eval-aggregate-test.mjs      # unit tests for aggregator
-  eval/
-    promptfooconfig.yaml         # cross-provider matrix
-    providers/
-      stub.mjs                   # callApi shim → /api/run
-      omlx.mjs
-      openai.mjs
-      anthropic.mjs
-    assertions/
-      scorecard-gates.mjs        # promptfoo JS assertion → hard/soft gates
+  bin/                       # user-callable entry points
+    labctl
+    lab-web-server.mjs
+    lab-web-dev.mjs
+    smoke-test.sh
+    omlx-smoke-test.sh
+  container/                 # scripts that run INSIDE player / gateway containers
+    agent-act.sh             # also where the Anthropic provider branch will live
+    player-node.sh
+    gateway-query.sh
+    gateway-smoke-test.sh
+  lib/                       # importable modules
+    lab-web-actions.mjs      # parseTurnStatsMarkers lives here
+    lab-span.sh
+    mint-token.sh
+    generate-compose.sh
+  eval/                      # eval framework
+    aggregate.mjs            # pure aggregator + CLI (landed)
+    run.mjs                  # batch runner against /api/run (landed)
     profiles/
-      stub-smoke.json
-      omlx-default.json
-      omlx-large.json
-      openai-mini.json
-      anthropic-haiku.json
-    fixtures/
-      village-win.jsonl
-      wolf-win.jsonl
-      malformed-turn-stats.jsonl
-    baselines/
-      stub-smoke.json
-      omlx-default.json
-      openai-mini.json
-    runs/                    # gitignored
-      <profile>-<timestamp>/
-        scorecard.json
-        scorecard.md
-        games/*.jsonl
+      stub-smoke.json        # landed
+      omlx-qwen35.json       # landed
+      # Forthcoming:
+      # omlx-large.json
+      # openai-mini.json
+      # anthropic-haiku.json
+    runs/                    # gitignored; <profile>-<stamp>/ outputs
+    # Forthcoming (not yet built):
+    # promptfooconfig.yaml
+    # providers/{stub,omlx,openai,anthropic}.mjs
+    # assertions/scorecard-gates.mjs
+    # fixtures/{village-win,wolf-win,malformed-turn-stats}.jsonl
+    # baselines/{stub-smoke,omlx-default,openai-mini}.json
+  tests/                     # all test suites
+    agent-act.sh
+    mint-token.sh
+    lab-authz.sh
+    lab-span.sh
+    generated-compose.sh
+    lab-web.mjs              # also covers parseTurnStatsMarkers
+    eval-aggregate.mjs       # unit tests for the aggregator
+    eval-run.mjs             # unit + mock-HTTP tests for the runner
 ```
 
 ## Phased rollout
@@ -460,7 +505,7 @@ etc/post-013/werewolf-quack-lab/
    and durable-log `turn-stats` event. Also adds an Anthropic provider
    path in `agent-act.sh` (or a sibling script) since Claude's API is
    not OpenAI-compatible. One PR, no new functionality.
-2. **Aggregate**: ship `bin/eval-aggregate.mjs` and the unit tests with
+2. **Aggregate**: ship `eval/aggregate.mjs` and the unit tests with
    synthetic fixtures. No live model needed.
 3. **promptfoo wiring**: add `eval/promptfooconfig.yaml`, the four
    provider shims, and the gates assertion. Wire the `stub-smoke`
