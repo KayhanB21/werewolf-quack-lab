@@ -15,8 +15,8 @@ runner.
 - Generated player services from JSON config, plus a browser UI that can generate
   a 3 to 12 player roster and choose each role.
 - Per-player private tables: `self`, `knowledge`, `suspicions`, `intents`, `votes`.
-- Container-local agent actions through `agent-act.sh`, written into the running
-  DuckDB process through a FIFO to avoid file-lock conflicts.
+- Container-local agent actions through `container/agent-act.sh`, written into
+  the running DuckDB process through a FIFO to avoid file-lock conflicts.
 - Scripted, oMLX, OpenAI-compatible, and OpenAI provider modes. OpenAI defaults
   to `gpt-4o-mini`; oMLX discovers local models through `/v1/models`.
 - Model output normalization before writes: phase actions are constrained, wolf
@@ -86,9 +86,9 @@ During development, use the hot-reload runner:
 make web-dev
 ```
 
-It polls `bin`, `web`, `sql`, `config`, `Dockerfile`, `docker-compose.yml`, and
-`Makefile`. When one of those files changes, it restarts the Node web server and
-the browser reloads after the reconnect.
+It polls `bin`, `lib`, `container`, `eval`, `web`, `sql`, `config`, `Dockerfile`,
+`docker-compose.yml`, and `Makefile`. When one of those files changes, it
+restarts the Node web server and the browser reloads after the reconnect.
 
 ## Browser Round Runner
 
@@ -177,8 +177,9 @@ container-local agent to act through oMLX, and then runs the same Quack gateway
 assertions as the deterministic smoke.
 
 The model response is treated as a proposal, not as trusted SQL input. Before
-`agent-act.sh` writes to DuckDB, it normalizes the action for the current phase,
-retargets invalid wolf choices, and strips public text from wolf-phase actions.
+`container/agent-act.sh` writes to DuckDB, it normalizes the action for the
+current phase, retargets invalid wolf choices, and strips public text from
+wolf-phase actions.
 
 ## How It Maps To The Browser Demo
 
@@ -189,7 +190,7 @@ retargets invalid wolf choices, and strips public text from wolf-phase actions.
 | `postMessage` request/response | Quack HTTP protocol |
 | JS token/policy shim | Quack auth/authz callbacks |
 | Gateway worker fan-out | Gateway DuckDB running `quack_query(...)` |
-| Browser orchestrator asking an agent to act | `labctl run-agent`, `run-day`, and `run-wolf` invoking `agent-act.sh` inside each player container |
+| Browser orchestrator asking an agent to act | `labctl run-agent`, `run-day`, and `run-wolf` invoking `container/agent-act.sh` inside each player container |
 | Browser game loop | Browser runner plus server-side lightweight referee |
 | `wolf-team-read` row predicate | `wolf_channel` view checks local `self.role` |
 
@@ -215,11 +216,13 @@ config
 Useful make targets:
 
 ```text
-make web       Start the browser runner on http://localhost:5174
-make web-dev   Start the browser runner with file watching and browser reload
-make web-test  Run the browser runner unit checks
-make test      Run agent, generator, web, and real Quack smoke checks
-make down      Stop the generated lab
+make web        Start the browser runner on http://localhost:5174
+make web-dev    Start the browser runner with file watching and browser reload
+make web-test   Run the orchestrator unit checks (tests/lab-web.mjs)
+make eval-test  Run the eval framework unit checks
+make eval-run PROFILE=eval/profiles/<name>.json  Run a batch eval profile
+make test       Run agent, generator, web, eval, and real Quack smoke checks
+make down       Stop the generated lab
 ```
 
 `full_log` reads from `post_game_intents`. By default the player nodes start with
@@ -250,7 +253,29 @@ This is a local lab, not a production deployment.
 The important property is architectural: each player server owns the private data,
 and policy is evaluated on that player's DuckDB side before rows leave the node.
 
+## Repository Layout
+
+```
+bin/        user-callable entry points (labctl, web servers, smoke runner)
+container/  scripts that run INSIDE Docker player / gateway containers
+lib/        importable modules (orchestrator helpers, lab-span, mint-token,
+            generate-compose)
+eval/       eval framework (aggregate.mjs, run.mjs, profiles/)
+tests/      every test suite
+sql/        DuckDB SQL fragments (player init, gateway init, scopes)
+web/        browser runner static assets
+docs/       architecture, roadmap, eval plan, implementation status
+```
+
+In the container image, the host directories `container/` and `lib/` are
+copied to `/app/container/` and `/app/lib/` respectively. Callers
+(`labctl`, `gateway-query.sh`, the generated compose) use those container
+paths.
+
 ## Documentation
 
 - `docs/architecture.md`: implementation architecture and current boundaries.
 - `docs/roadmap.md`: completed work and next milestones.
+- `docs/eval-plan.md`: eval framework design and metric taxonomy.
+- `docs/implementation-status.md`: per-feature status, including the eval
+  framework and the omlx + Qwen3.5 reasoning-mode notes.

@@ -9,7 +9,7 @@ auto-play referee.
 config/game.sample.json or browser settings
   -> buildGameConfig(...)
   -> .generated/web-game.json when using the browser runner
-  -> bin/generate-compose.sh
+  -> lib/generate-compose.sh
   -> .generated/docker-compose.yml
 
 browser runner
@@ -41,7 +41,7 @@ agent-* containers
   LOAD quack
   private player tables
   local SQL action pipe
-  agent-act.sh
+  container/agent-act.sh   (image path: /app/container/agent-act.sh)
   exposed views
   quack_authentication_function
   quack_authorization_function
@@ -84,9 +84,9 @@ player node therefore creates a local FIFO:
 /tmp/agent-a-duckdb.fifo
 ```
 
-`agent-act.sh` writes SQL into that FIFO. The already-running DuckDB process reads
-the command and inserts the row. This keeps the action write inside the player
-container and avoids giving the gateway write access.
+`container/agent-act.sh` writes SQL into that FIFO. The already-running DuckDB
+process reads the command and inserts the row. This keeps the action write
+inside the player container and avoids giving the gateway write access.
 
 `labctl` can invoke all players, wolves only, or one player:
 
@@ -140,7 +140,19 @@ LLM_PROVIDER=omlx
 LLM_BASE_URL=http://host.docker.internal:8000/v1
 LLM_MODEL=<model-id-from-http://localhost:8000/v1/models>
 LLM_API_KEY=<only-if-oMLX-api-key-auth-is-enabled>
+LLM_THINKING_BUDGET=400  # required for Qwen3.5-DeepSeek-V4-Flash variants
+LLM_TEMPERATURE=0.1
+LLM_MAX_TOKENS=800
 ```
+
+`LLM_THINKING_BUDGET` is omlx-specific: it caps the model's chain-of-thought
+token budget separately from `max_tokens`. With reasoning models that ignore
+`response_format: json_object` (such as Qwen3.5-DeepSeek-V4-Flash-4bit), an
+unset budget produces unbounded CoT loops that never close a JSON object;
+setting the budget non-zero unlocks the `reasoning_content` split and gets
+clean JSON answers in under 10 s per turn. The shim captures both the
+answer JSON and the CoT, sending only the answer through normalization and
+the CoT into the per-turn `__TURN_STATS__` marker.
 
 The browser runner has provider tiles for `Scripted`, `oMLX`, `Compatible`, and
 `OpenAI`. OpenAI defaults to `gpt-4o-mini`. oMLX and compatible endpoints can use
@@ -250,9 +262,56 @@ authorization callback can consult.
 
 - The browser runner is local only and has no TLS.
 - The lightweight referee is not a complete Werewolf engine.
-- Seer and doctor are modeled as roles but do not yet have full night powers.
-- Player memory is still minimal. Agents see their role, partner list, player
-  ids, phase, and current round through the action prompt.
+- Seer and doctor are modeled as roles and now have full night powers
+  (`seer-investigate`, `doctor-save` with save-cancels-kill resolution).
+- Player memory: agents see their role, partner list, alive players,
+  eliminated players + revealed roles, public events, public discussion
+  log, their own intents, private seer notes, and their running beliefs
+  (suspicions + knowledge from previous turns). The wolf channel separately
+  threads the current consensus target into wolf rotations.
 - API keys are best passed through the environment of the web server or lab
   command. The UI can accept a key for convenience, but it is not a secret
   manager.
+
+## Repository Layout
+
+```
+bin/        user-callable entry points (labctl, lab-web-server.mjs,
+            lab-web-dev.mjs, smoke-test.sh, omlx-smoke-test.sh)
+container/  scripts that run INSIDE Docker player and gateway containers
+            (agent-act.sh, player-node.sh, gateway-query.sh,
+             gateway-smoke-test.sh)
+lib/        importable / sourceable modules
+            (lab-web-actions.mjs, lab-span.sh, mint-token.sh,
+             generate-compose.sh)
+eval/       eval framework (aggregate.mjs, run.mjs, profiles/, runs/)
+tests/      every test suite (agent-act.sh, mint-token.sh, lab-authz.sh,
+            lab-span.sh, generated-compose.sh, lab-web.mjs,
+            eval-aggregate.mjs, eval-run.mjs)
+```
+
+In the container image, `container/` and `lib/` are copied to
+`/app/container/` and `/app/lib/` respectively. Callers (`labctl`,
+`container/gateway-query.sh`, the generated compose) reference those
+container paths.
+
+## Eval Framework
+
+`eval/aggregate.mjs` consumes `.generated/games/<id>.jsonl` durable logs
+and emits a scorecard with four sections: `prompt_following`, `game_shape`,
+`belief_quality`, `performance`. `eval/run.mjs` drives N games via
+`/api/run`, collects each game's durable log into
+`eval/runs/<profile>-<stamp>/`, and writes the aggregated `scorecard.json`.
+
+Each agent invocation emits a per-turn `__TURN_STATS__ <json>` marker line
+on stdout. The orchestrator (`bin/lab-web-server.mjs`) parses these via
+`parseTurnStatsMarkers` in `lib/lab-web-actions.mjs` and appends them as
+`turn-stats` events in the durable log. Captured per turn: parse path
+(`stub` / `object` / `text` / `http-error`), JSON validity, action
+legality for the phase, finish reason, prompt / completion / reasoning
+token counts, wall-clock latency, suspicion / knowledge counts, and a
+truncated `reasoning_content`.
+
+See `docs/eval-plan.md` for the metric taxonomy, prior-art survey, and
+phased rollout. See `docs/implementation-status.md` for what's currently
+landed and what's in the backlog.

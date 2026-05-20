@@ -52,7 +52,7 @@ Remaining work:
 
 ## Phase 4: Lightweight Full-Game Referee
 
-Status: first version complete.
+Status: complete.
 
 - Start a clean lab for `Play Game`.
 - Track alive players outside the player containers.
@@ -61,24 +61,57 @@ Status: first version complete.
 - Run vote actions only for alive players.
 - Query current-round vote rows through `public_log`.
 - Apply plurality day eliminations.
-- Run wolf actions only for alive wolves.
+- Run wolf actions only for alive wolves (with multi-rotation consensus,
+  configurable cap up to 6).
 - Query current-round wolf rows through `wolf_channel`.
 - Apply plurality wolf kills.
+- Doctor save-cancels-kill resolution.
+- Seer night investigation with private knowledge writeback.
+- Role reveal announcements when a player is eliminated.
 - Declare village when all wolves are gone.
 - Declare wolves when wolves reach parity with town.
 - Return an undecided result when the max round limit is reached.
+- Durable referee event log in `.generated/games/<id>.jsonl` covering
+  `game-start`, `round-start`, `turn-stats`, `lynch`, `no-lynch`,
+  `wolf-kill`, `wolf-saved`, `no-kill`, `seer-learn`, `game-end`.
 
 Remaining work:
 
-- Move referee state into a durable event log.
-- Expose max rounds in the UI.
+- Promote the referee out of `bin/lab-web-server.mjs` into a standalone
+  `bin/referee.mjs` so the HTTP server is just a thin shell.
+- Expose max rounds and wolf rotation cap in the UI (wired via API today).
 - Add tie-breaking policy controls.
-- Add seer and doctor night powers.
-- Feed richer recent public history into each agent prompt.
 - Add memory compaction for longer games.
-- Add tests for multi-round edge cases and tie outcomes.
 
-## Phase 5: Token-Scoped ACLs
+## Phase 5: Eval Framework
+
+Status: complete (P3 in `docs/implementation-status.md`).
+
+- Per-turn `__TURN_STATS__ <json>` marker on agent stdout, capturing parse
+  path, JSON validity, action legality, finish reason, prompt / completion /
+  reasoning token counts, latency (ms), suspicion / knowledge counts, and a
+  truncated `reasoning_content`.
+- omlx `thinking_budget` is first-class: setting it non-zero unlocks the
+  `reasoning_content` split for Qwen3 family models that otherwise loop on
+  unbounded CoT.
+- `lib/lab-web-actions.mjs#parseTurnStatsMarkers` parses the marker; the
+  orchestrator appends `turn-stats` events to the durable log.
+- `eval/aggregate.mjs` computes a scorecard with `prompt_following`,
+  `game_shape`, `belief_quality`, and `performance` sections.
+- `eval/run.mjs` drives N games via `/api/run`, collects each durable log,
+  aggregates, and writes `scorecard.json`.
+- Profiles in `eval/profiles/`: `stub-smoke.json` (3-game pipeline sanity),
+  `omlx-qwen35.json` (10 games against local omlx with `thinking_budget=400`).
+
+Remaining work:
+
+- Hosted-LLM provider path (Anthropic `/messages` is not OpenAI-compatible).
+- LLM-as-judge deception metrics (`deception_production_rate`,
+  `deception_detection_rate` from the WOLF taxonomy).
+- Larger N profiles for variance analysis (omlx-large at 100 games,
+  openai-mini once an API key is wired).
+
+## Phase 6: Token-Scoped ACLs
 
 SQL macros are good for the first lab, but they cannot maintain session state.
 For production-like scoping:

@@ -1,4 +1,4 @@
-.PHONY: up down logs test web web-dev web-test whoami public wolf full denied shell
+.PHONY: up down logs test web web-dev web-test eval-test eval-run whoami public wolf full denied shell
 
 up:
 	./bin/labctl up
@@ -19,7 +19,15 @@ web-dev:
 	node ./bin/lab-web-dev.mjs
 
 web-test:
-	node ./bin/lab-web-test.mjs
+	node ./tests/lab-web.mjs
+
+eval-test:
+	node ./tests/eval-aggregate.mjs
+	node ./tests/eval-run.mjs
+
+eval-run:
+	@if [ -z "$(PROFILE)" ]; then echo "usage: make eval-run PROFILE=eval/profiles/stub-smoke.json"; exit 1; fi
+	node ./eval/run.mjs $(PROFILE)
 
 whoami:
 	./bin/labctl query whoami
