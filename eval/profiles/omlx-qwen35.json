@@ -1,0 +1,21 @@
+{
+  "name": "omlx-qwen35",
+  "description": "Local MLX (omlx) running the Qwen3.5-9B-DeepSeek-V4-Flash-4bit model. Requires thinking_budget>0 to escape unbounded CoT loops. api_key_env defaults to OMLX_API_KEY; set base_url to point at the host's omlx server (the lab-web-actions layer rewrites it to host.docker.internal for containers).",
+  "provider": "omlx",
+  "model": "MLX-Qwen3.5-9B-DeepSeek-V4-Flash-4bit",
+  "base_url": "http://localhost:8000/v1",
+  "api_key_env": "OMLX_API_KEY",
+  "game_count": 10,
+  "concurrency": 1,
+  "max_rounds": 8,
+  "thinking_budget": 400,
+  "temperature": 0.1,
+  "max_tokens": 800,
+  "players": [
+    { "id": "p1", "role": "wolf" },
+    { "id": "p2", "role": "wolf" },
+    { "id": "p3", "role": "seer" },
+    { "id": "p4", "role": "doctor" },
+    { "id": "p5", "role": "villager" }
+  ]
+}

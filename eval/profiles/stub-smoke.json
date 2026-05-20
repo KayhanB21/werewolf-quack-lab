@@ -1,0 +1,16 @@
+{
+  "name": "stub-smoke",
+  "description": "Tiny pipeline-sanity profile. Uses the scripted stub provider so it never touches an external LLM. Useful for CI to confirm the eval/durable-log path produces a parseable scorecard.",
+  "provider": "stub",
+  "model": "stub-werewolf-v1",
+  "game_count": 3,
+  "concurrency": 1,
+  "max_rounds": 6,
+  "players": [
+    { "id": "p1", "role": "wolf" },
+    { "id": "p2", "role": "wolf" },
+    { "id": "p3", "role": "seer" },
+    { "id": "p4", "role": "doctor" },
+    { "id": "p5", "role": "villager" }
+  ]
+}
