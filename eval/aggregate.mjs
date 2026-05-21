@@ -169,10 +169,12 @@ export function aggregate(games) {
       total_turns: 0,
       valid_json_rate: 0,
       action_in_phase_rate: 0,
+      target_override_rate: 0,
       http_error_rate: 0,
       parse_path_histogram: {},
       finish_reason_histogram: {},
       raw_action_histogram: {},
+      per_phase: {},
     },
     game_shape: {
       village_winrate: 0,
@@ -190,6 +192,13 @@ export function aggregate(games) {
       avg_knowledge_per_turn: 0,
       seer_targeting_wolf_rate: 0,
     },
+    deception: {
+      // null when no judge-verdict events were found; numeric when present
+      deception_production_rate: null,
+      deception_detection_rate: null,
+      judged_utterances: 0,
+      judge_models: [],
+    },
     performance: {
       avg_latency_ms: 0,
       p50_latency_ms: 0,
@@ -206,7 +215,17 @@ export function aggregate(games) {
 
   const validJson = [];
   const inPhase = [];
+  const targetOverridden = [];
   const httpErrors = [];
+  // per_phase: { day: {total, valid_json, in_phase, target_overridden}, ... }
+  const perPhase = new Map();
+  const bumpPhase = (phase, key) => {
+    const p = phase || "(unknown)";
+    if (!perPhase.has(p)) {
+      perPhase.set(p, { total: 0, valid_json: 0, in_phase: 0, target_overridden: 0 });
+    }
+    perPhase.get(p)[key] += 1;
+  };
   const latencies = [];
   const promptTokens = [];
   const completionTokens = [];
@@ -223,6 +242,12 @@ export function aggregate(games) {
   let totalRoundsCompleted = 0;
   let seerWolf = 0;
   let seerTotal = 0;
+  // deception accumulators across all games
+  let judgedDeceptiveCount = 0;
+  let judgedTotal = 0;
+  let detTotal = 0;
+  let detHits = 0;
+  const judgeModelsSet = new Set();
 
   for (const { events, path: gamePath } of games) {
     const game = summarizeGame(events);
@@ -240,14 +265,57 @@ export function aggregate(games) {
     seerTotal += game.seer_targeted_total;
     seerWolf += game.seer_targeted_wolf_count;
 
+    // walk this game's events for judge-verdict + accusation cross-referencing
+    {
+      const gameRoles = new Map();
+      const wolfFirstDeception = new Map(); // agent -> round of first deceptive utterance
+      const verdictsHere = [];
+      const accusationsHere = [];
+      for (const evt of events) {
+        if (evt.kind === "game-start" && Array.isArray(evt.players)) {
+          for (const p of evt.players) gameRoles.set(p.id, p.role);
+        }
+        if (evt.kind === "judge-verdict" && typeof evt.deceptive === "boolean") {
+          verdictsHere.push(evt);
+          judgedTotal += 1;
+          if (evt.deceptive) {
+            judgedDeceptiveCount += 1;
+            if (!wolfFirstDeception.has(evt.agent)) wolfFirstDeception.set(evt.agent, evt.round);
+          }
+          if (evt.judge_model) judgeModelsSet.add(evt.judge_model);
+        }
+        if (evt.kind === "agent-intent" && (evt.action === "accuse" || evt.action === "vote")) {
+          if (evt.target) accusationsHere.push(evt);
+        }
+      }
+      for (const acc of accusationsHere) {
+        const accRole = gameRoles.get(acc.agent);
+        if (accRole === "wolf") continue; // wolves' accuses don't count for detection
+        const targetRole = gameRoles.get(acc.target);
+        if (!targetRole) continue;
+        const anyDeceptionByNow = [...wolfFirstDeception.values()].some((r) => r < acc.round);
+        if (!anyDeceptionByNow) continue;
+        detTotal += 1;
+        if (targetRole === "wolf") detHits += 1;
+      }
+    }
+
     for (const ts of game.turn_stats) {
       scorecard.prompt_following.total_turns += 1;
-      validJson.push(ts.valid_json === true ? 1 : 0);
-      inPhase.push(ts.action_in_phase === true ? 1 : 0);
+      const isValidJson = ts.valid_json === true ? 1 : 0;
+      const isInPhase = ts.action_in_phase === true ? 1 : 0;
+      const isOverridden = ts.target_overridden === true ? 1 : 0;
+      validJson.push(isValidJson);
+      inPhase.push(isInPhase);
+      targetOverridden.push(isOverridden);
       httpErrors.push(ts.parse_path === "http-error" || ts.http_status === "error" ? 1 : 0);
       bumpHist(scorecard.prompt_following.parse_path_histogram, ts.parse_path);
       bumpHist(scorecard.prompt_following.finish_reason_histogram, ts.finish_reason);
       bumpHist(scorecard.prompt_following.raw_action_histogram, ts.raw_action || ts.normalized_action);
+      bumpPhase(ts.phase, "total");
+      if (isValidJson) bumpPhase(ts.phase, "valid_json");
+      if (isInPhase) bumpPhase(ts.phase, "in_phase");
+      if (isOverridden) bumpPhase(ts.phase, "target_overridden");
 
       const lat = safeNonNegative(ts.latency_ms);
       if (lat > 0) latencies.push(lat);
@@ -292,7 +360,24 @@ export function aggregate(games) {
 
   scorecard.prompt_following.valid_json_rate = rate(validJson.reduce((a, b) => a + b, 0), validJson.length);
   scorecard.prompt_following.action_in_phase_rate = rate(inPhase.reduce((a, b) => a + b, 0), inPhase.length);
+  scorecard.prompt_following.target_override_rate = rate(
+    targetOverridden.reduce((a, b) => a + b, 0),
+    targetOverridden.length,
+  );
   scorecard.prompt_following.http_error_rate = rate(httpErrors.reduce((a, b) => a + b, 0), httpErrors.length);
+
+  // Materialize per_phase as a sorted object of rates + counts.
+  const perPhaseObj = {};
+  for (const phase of [...perPhase.keys()].sort()) {
+    const c = perPhase.get(phase);
+    perPhaseObj[phase] = {
+      total: c.total,
+      valid_json_rate: rate(c.valid_json, c.total),
+      action_in_phase_rate: rate(c.in_phase, c.total),
+      target_override_rate: rate(c.target_overridden, c.total),
+    };
+  }
+  scorecard.prompt_following.per_phase = perPhaseObj;
 
   scorecard.game_shape.village_winrate = rate(villageWins, completed);
   scorecard.game_shape.wolves_winrate = rate(wolfWins, completed);
@@ -319,6 +404,12 @@ export function aggregate(games) {
   scorecard.belief_quality.avg_knowledge_per_turn = mean(knowledgePerTurn);
   scorecard.belief_quality.seer_targeting_wolf_rate = rate(seerWolf, seerTotal);
 
+  // deception: only populated when at least one judge-verdict was seen
+  scorecard.deception.deception_production_rate = judgedTotal > 0 ? judgedDeceptiveCount / judgedTotal : null;
+  scorecard.deception.deception_detection_rate = detTotal > 0 ? detHits / detTotal : null;
+  scorecard.deception.judged_utterances = judgedTotal;
+  scorecard.deception.judge_models = [...judgeModelsSet];
+
   const sortedLat = latencies.slice().sort((a, b) => a - b);
   scorecard.performance.avg_latency_ms = Math.round(mean(latencies));
   scorecard.performance.p50_latency_ms = Math.round(quantile(sortedLat, 0.5));
@@ -343,8 +434,14 @@ export function formatScorecardSummary(scorecard) {
   lines.push("prompt-following:");
   lines.push(`  valid_json_rate     = ${pct(scorecard.prompt_following.valid_json_rate)}`);
   lines.push(`  action_in_phase     = ${pct(scorecard.prompt_following.action_in_phase_rate)}`);
+  lines.push(`  target_override     = ${pct(scorecard.prompt_following.target_override_rate)}`);
   lines.push(`  http_error_rate     = ${pct(scorecard.prompt_following.http_error_rate)}`);
   lines.push(`  parse_paths         = ${JSON.stringify(scorecard.prompt_following.parse_path_histogram)}`);
+  for (const [phase, c] of Object.entries(scorecard.prompt_following.per_phase || {})) {
+    lines.push(
+      `  phase[${phase.padEnd(6)}] n=${c.total} json=${pct(c.valid_json_rate)} in_phase=${pct(c.action_in_phase_rate)} override=${pct(c.target_override_rate)}`,
+    );
+  }
   lines.push("game-shape:");
   lines.push(`  village_winrate     = ${pct(scorecard.game_shape.village_winrate)}`);
   lines.push(`  wolves_winrate      = ${pct(scorecard.game_shape.wolves_winrate)}`);
@@ -355,6 +452,15 @@ export function formatScorecardSummary(scorecard) {
   lines.push("belief-quality:");
   lines.push(`  belief_emit_rate    = ${pct(scorecard.belief_quality.belief_emit_rate)}`);
   lines.push(`  seer_targets_wolf   = ${pct(scorecard.belief_quality.seer_targeting_wolf_rate)}`);
+  if (scorecard.deception?.judged_utterances > 0) {
+    lines.push("deception (LLM-judged):");
+    lines.push(`  judged_utterances   = ${scorecard.deception.judged_utterances}`);
+    lines.push(`  deception_prod_rate = ${pct(scorecard.deception.deception_production_rate ?? 0)}`);
+    if (scorecard.deception.deception_detection_rate != null) {
+      lines.push(`  deception_det_rate  = ${pct(scorecard.deception.deception_detection_rate)}`);
+    }
+    lines.push(`  judge_models        = ${scorecard.deception.judge_models.join(", ") || "(none)"}`);
+  }
   lines.push("performance:");
   lines.push(`  avg_latency_ms      = ${scorecard.performance.avg_latency_ms}`);
   lines.push(`  p95_latency_ms      = ${scorecard.performance.p95_latency_ms}`);

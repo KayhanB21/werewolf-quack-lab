@@ -74,14 +74,26 @@ cat > "${fake_bin}/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 prev=""
+url=""
 for arg in "$@"; do
   if [[ "${prev}" == "-d" && -n "${FAKE_CURL_PAYLOAD_PATH:-}" ]]; then
     printf "%s" "${arg}" > "${FAKE_CURL_PAYLOAD_PATH}"
   fi
+  # capture the URL (first positional that looks like http*)
+  if [[ -z "${url}" && "${arg}" == http* ]]; then
+    url="${arg}"
+  fi
   prev="${arg}"
 done
-jq -n --arg content "${FAKE_TURN_CONTENT:?FAKE_TURN_CONTENT is required}" \
-  '{choices: [{message: {content: $content}}]}'
+if [[ "${url}" == *"/messages"* ]]; then
+  # Anthropic-shaped response
+  jq -n --arg content "${FAKE_TURN_CONTENT:?FAKE_TURN_CONTENT is required}" \
+    '{content: [{type:"text", text: $content}], usage: {input_tokens: 420, output_tokens: 180}, stop_reason: "end_turn"}'
+else
+  # OpenAI-shaped response (default for openai|openai-compatible|omlx)
+  jq -n --arg content "${FAKE_TURN_CONTENT:?FAKE_TURN_CONTENT is required}" \
+    '{choices: [{message: {content: $content}}], usage: {prompt_tokens: 0, completion_tokens: 0}}'
+fi
 SH
 chmod +x "${fake_bin}/curl"
 
@@ -434,6 +446,9 @@ if ! jq -e '
   and .valid_json == true
   and .action_in_phase == true
   and .normalized_action == "speak"
+  and (.raw_target | type == "string")
+  and (.normalized_target | type == "string")
+  and (.target_overridden | type == "boolean")
   and .suspicions_count == 1
   and .knowledge_count == 1
   and (.tokens | type == "object")
@@ -542,6 +557,180 @@ wait "${stats_thinking_reader_pid}"
 if ! jq -e '.thinking_budget == 400 and .temperature == 0.1 and .max_tokens == 600' >/dev/null <<<"$(cat "${thinking_payload}")"; then
   echo "thinking_budget, temperature, max_tokens should be threaded into the payload" >&2
   cat "${thinking_payload}" >&2
+  exit 1
+fi
+
+# === target override: model picks a dead/invalid target; shim retargets ===
+# vote phase + raw target outside PLAYER_IDS forces normalize_target to pick
+# a valid replacement, so the __TURN_STATS__ marker should carry
+# target_overridden=true.
+stats_override_sql="${TMP_DIR}/stats-override.sql"
+stats_override_pipe="${stats_override_sql}.fifo"
+stats_override_stdout="${TMP_DIR}/stats-override.stdout"
+mkfifo "${stats_override_pipe}"
+cat "${stats_override_pipe}" > "${stats_override_sql}" &
+stats_override_reader_pid="$!"
+
+env \
+  NODE_ID="agent-a" \
+  ROLE="villager" \
+  PARTNERS="" \
+  PLAYER_IDS="agent-a,agent-b,agent-d" \
+  LLM_PROVIDER="openai-compatible" \
+  LLM_BASE_URL="http://fake-openai.local/v1" \
+  FAKE_TURN_CONTENT='{"action":"vote","target":"ghost-player","public_text":"voting","rationale":"r"}' \
+  CONTEXT_JSON='{}' \
+  WOLF_CHANNEL_JSON='[]' \
+  PATH="${fake_bin}:${PATH}" \
+  ACTION_PIPE="${stats_override_pipe}" \
+  "${ROOT_DIR}/container/agent-act.sh" --phase "vote" --round 1 >"${stats_override_stdout}"
+
+wait "${stats_override_reader_pid}"
+
+stats_override_line="$(grep -F "__TURN_STATS__" "${stats_override_stdout}" | tail -n1)"
+stats_override_json="${stats_override_line#*__TURN_STATS__ }"
+
+if ! jq -e '
+  .raw_target == "ghost-player"
+  and .normalized_target != "ghost-player"
+  and .normalized_target != ""
+  and .target_overridden == true
+  and .normalized_action == "vote"
+' >/dev/null <<<"${stats_override_json}"; then
+  echo "expected target_overridden=true when raw_target is not in PLAYER_IDS" >&2
+  printf '%s\n' "${stats_override_json}" >&2
+  exit 1
+fi
+
+# === target NOT overridden: model picks a valid target ===
+stats_clean_sql="${TMP_DIR}/stats-clean.sql"
+stats_clean_pipe="${stats_clean_sql}.fifo"
+stats_clean_stdout="${TMP_DIR}/stats-clean.stdout"
+mkfifo "${stats_clean_pipe}"
+cat "${stats_clean_pipe}" > "${stats_clean_sql}" &
+stats_clean_reader_pid="$!"
+
+env \
+  NODE_ID="agent-a" \
+  ROLE="villager" \
+  PARTNERS="" \
+  PLAYER_IDS="agent-a,agent-b,agent-d" \
+  LLM_PROVIDER="openai-compatible" \
+  LLM_BASE_URL="http://fake-openai.local/v1" \
+  FAKE_TURN_CONTENT='{"action":"vote","target":"agent-b","public_text":"voting agent-b","rationale":"r"}' \
+  CONTEXT_JSON='{}' \
+  WOLF_CHANNEL_JSON='[]' \
+  PATH="${fake_bin}:${PATH}" \
+  ACTION_PIPE="${stats_clean_pipe}" \
+  "${ROOT_DIR}/container/agent-act.sh" --phase "vote" --round 1 >"${stats_clean_stdout}"
+
+wait "${stats_clean_reader_pid}"
+
+stats_clean_line="$(grep -F "__TURN_STATS__" "${stats_clean_stdout}" | tail -n1)"
+stats_clean_json="${stats_clean_line#*__TURN_STATS__ }"
+
+if ! jq -e '
+  .raw_target == "agent-b"
+  and .normalized_target == "agent-b"
+  and .target_overridden == false
+' >/dev/null <<<"${stats_clean_json}"; then
+  echo "expected target_overridden=false when raw_target is valid" >&2
+  printf '%s\n' "${stats_clean_json}" >&2
+  exit 1
+fi
+
+# === Anthropic provider: payload shape, response parsing, prompt cache control ===
+anthropic_sql="${TMP_DIR}/anthropic.sql"
+anthropic_pipe="${anthropic_sql}.fifo"
+anthropic_stdout="${TMP_DIR}/anthropic.stdout"
+anthropic_payload="${TMP_DIR}/anthropic.payload"
+mkfifo "${anthropic_pipe}"
+cat "${anthropic_pipe}" > "${anthropic_sql}" &
+anthropic_reader_pid="$!"
+
+env \
+  NODE_ID="agent-a" \
+  ROLE="villager" \
+  PARTNERS="" \
+  PLAYER_IDS="agent-a,agent-b,agent-d" \
+  LLM_PROVIDER="anthropic" \
+  LLM_BASE_URL="https://api.anthropic.test" \
+  LLM_API_KEY="fake-anthropic-key" \
+  LLM_MAX_TOKENS="500" \
+  LLM_TEMPERATURE="0.3" \
+  FAKE_TURN_CONTENT='{"action":"speak","target":"","public_text":"Hello team.","rationale":"open with a neutral statement"}' \
+  FAKE_CURL_PAYLOAD_PATH="${anthropic_payload}" \
+  CONTEXT_JSON='{}' \
+  WOLF_CHANNEL_JSON='[]' \
+  PATH="${fake_bin}:${PATH}" \
+  ACTION_PIPE="${anthropic_pipe}" \
+  "${ROOT_DIR}/container/agent-act.sh" --phase "day" --round 1 >"${anthropic_stdout}"
+
+wait "${anthropic_reader_pid}"
+
+# 1. payload must use Anthropic shape: top-level `system`, no `response_format`.
+if ! jq -e '
+  .model == "claude-test"
+  or .system != null
+' >/dev/null <<<"$(cat "${anthropic_payload}")"; then
+  echo "Anthropic payload must include top-level system" >&2
+  cat "${anthropic_payload}" >&2
+  exit 1
+fi
+
+if ! jq -e '
+  (.system | type == "array")
+  and (.system[0].type == "text")
+  and (.system[0].cache_control.type == "ephemeral")
+  and (.messages | length == 1)
+  and (.messages[0].role == "user")
+  and (.response_format // null) == null
+  and (.max_tokens == 500)
+  and (.temperature == 0.3)
+' >/dev/null <<<"$(cat "${anthropic_payload}")"; then
+  echo "Anthropic payload shape is wrong" >&2
+  cat "${anthropic_payload}" >&2
+  exit 1
+fi
+
+# 2. SQL was written with the model's content
+if ! grep -Fq "Hello team." "${anthropic_sql}"; then
+  echo "Anthropic content did not reach the FIFO" >&2
+  cat "${anthropic_sql}" >&2
+  exit 1
+fi
+
+# 3. turn-stats marker should record provider=anthropic and token usage
+anthropic_stats_line="$(grep -F "__TURN_STATS__" "${anthropic_stdout}" | tail -n1)"
+anthropic_stats_json="${anthropic_stats_line#*__TURN_STATS__ }"
+if ! jq -e '
+  .provider == "anthropic"
+  and .tokens.prompt == 420
+  and .tokens.completion == 180
+  and .valid_json == true
+  and .finish_reason == "end_turn"
+' >/dev/null <<<"${anthropic_stats_json}"; then
+  echo "Anthropic turn-stats marker is wrong" >&2
+  printf '%s\n' "${anthropic_stats_json}" >&2
+  exit 1
+fi
+
+# 4. Missing API key must hard-fail (no silent fallback)
+if env \
+    NODE_ID="agent-a" \
+    ROLE="villager" \
+    PARTNERS="" \
+    PLAYER_IDS="agent-a,agent-b" \
+    LLM_PROVIDER="anthropic" \
+    LLM_BASE_URL="https://api.anthropic.test" \
+    LLM_API_KEY="" \
+    FAKE_TURN_CONTENT='{"action":"speak"}' \
+    CONTEXT_JSON='{}' \
+    WOLF_CHANNEL_JSON='[]' \
+    PATH="${fake_bin}:${PATH}" \
+    ACTION_PIPE="/dev/null" \
+    "${ROOT_DIR}/container/agent-act.sh" --phase "day" --round 1 2>/dev/null; then
+  echo "anthropic provider should fail without LLM_API_KEY" >&2
   exit 1
 fi
 

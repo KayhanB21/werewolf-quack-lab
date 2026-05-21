@@ -227,6 +227,7 @@ make eval-nothink   Run the thinking_budget=0 omlx counterfactual
 make eval-7p    Run the 7-player omlx profile
 make eval-hot   Run the temperature=0.7 omlx variance probe
 make eval-all-omlx  Run every omlx profile back-to-back (short-circuits on gate failure)
+make eval-anthropic Run the Claude Haiku 4.5 profile (needs ANTHROPIC_API_KEY)
 make baseline-refresh   Regenerate eval/baselines/fixtures.json
 make baseline-check     Verify the committed baseline matches the aggregator
 make test       Run agent, generator, web, eval, and real Quack smoke checks

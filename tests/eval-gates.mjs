@@ -7,6 +7,7 @@ function scorecard(overrides = {}) {
     prompt_following: {
       valid_json_rate: 1,
       action_in_phase_rate: 1,
+      target_override_rate: 0,
       http_error_rate: 0,
       ...(overrides.prompt_following || {}),
     },
@@ -44,6 +45,13 @@ function scorecard(overrides = {}) {
   const r = evaluateGates(scorecard({ prompt_following: { action_in_phase_rate: 0.8 } }));
   assert.equal(r.pass, false);
   assert.equal(r.hard_failures[0].label, "action_in_phase_rate_min");
+}
+
+// === target_override_rate above ceiling: HARD fail ===
+{
+  const r = evaluateGates(scorecard({ prompt_following: { target_override_rate: 0.5 } }));
+  assert.equal(r.pass, false);
+  assert.equal(r.hard_failures[0].label, "target_override_rate_max");
 }
 
 // === http_error_rate above ceiling: HARD fail ===

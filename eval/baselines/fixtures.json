@@ -12,23 +12,39 @@
     ]
   },
   "prompt_following": {
-    "total_turns": 4,
-    "valid_json_rate": 0.5,
+    "total_turns": 5,
+    "valid_json_rate": 0.6,
     "action_in_phase_rate": 1,
-    "http_error_rate": 0.25,
+    "target_override_rate": 0.2,
+    "http_error_rate": 0.2,
     "parse_path_histogram": {
       "http-error": 1,
-      "object": 1,
+      "object": 2,
       "text": 1,
       "stub": 1
     },
     "finish_reason_histogram": {
       "(empty)": 2,
-      "stop": 1,
+      "stop": 2,
       "length": 1
     },
     "raw_action_histogram": {
-      "speak": 4
+      "speak": 4,
+      "vote": 1
+    },
+    "per_phase": {
+      "day": {
+        "total": 4,
+        "valid_json_rate": 0.5,
+        "action_in_phase_rate": 1,
+        "target_override_rate": 0
+      },
+      "vote": {
+        "total": 1,
+        "valid_json_rate": 1,
+        "action_in_phase_rate": 1,
+        "target_override_rate": 1
+      }
     }
   },
   "game_shape": {
@@ -45,21 +61,27 @@
     "no_kill_rate": 0
   },
   "belief_quality": {
-    "belief_emit_rate": 0.5,
-    "avg_suspicions_per_turn": 0.25,
-    "avg_knowledge_per_turn": 0.25,
+    "belief_emit_rate": 0.4,
+    "avg_suspicions_per_turn": 0.2,
+    "avg_knowledge_per_turn": 0.2,
     "seer_targeting_wolf_rate": 1
   },
+  "deception": {
+    "deception_production_rate": null,
+    "deception_detection_rate": null,
+    "judged_utterances": 0,
+    "judge_models": []
+  },
   "performance": {
-    "avg_latency_ms": 10501,
-    "p50_latency_ms": 9000,
+    "avg_latency_ms": 8901,
+    "p50_latency_ms": 3000,
     "p95_latency_ms": 30000,
-    "avg_prompt_tokens": 600,
-    "avg_completion_tokens": 230,
+    "avg_prompt_tokens": 607,
+    "avg_completion_tokens": 193,
     "avg_reasoning_tokens": 40,
-    "total_prompt_tokens": 1200,
-    "total_completion_tokens": 460,
-    "total_reasoning_tokens": 80
+    "total_prompt_tokens": 1820,
+    "total_completion_tokens": 580,
+    "total_reasoning_tokens": 120
   },
   "per_game": [
     {
@@ -94,7 +116,7 @@
       "no_kill": 0,
       "seer_learns": 1,
       "seer_targeted_wolf": 1,
-      "turn_count": 2
+      "turn_count": 3
     },
     {
       "game_id": "g3",

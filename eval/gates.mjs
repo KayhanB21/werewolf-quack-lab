@@ -18,6 +18,7 @@ import { readFile, writeFile } from "node:fs/promises";
 export const DEFAULT_GATES = Object.freeze({
   valid_json_rate_min: 0.85,
   action_in_phase_rate_min: 0.95,
+  target_override_rate_max: 0.20,
   http_error_rate_max: 0.10,
   incomplete_rate_max: 0.20,
   belief_emit_rate_min: 0.0,
@@ -82,6 +83,13 @@ export function evaluateGates(scorecard, profileGates, opts = {}) {
       label: "action_in_phase_rate_min",
       actual: pf.action_in_phase_rate,
       threshold: gates.action_in_phase_rate_min,
+    });
+  }
+  if (!lte(pf.target_override_rate, gates.target_override_rate_max)) {
+    hard_failures.push({
+      label: "target_override_rate_max",
+      actual: pf.target_override_rate,
+      threshold: gates.target_override_rate_max,
     });
   }
   if (!lte(pf.http_error_rate, gates.http_error_rate_max)) {

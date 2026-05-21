@@ -66,6 +66,7 @@ lib/        # importable / sourceable modules
 eval/       # eval framework
   aggregate.mjs           # pure aggregator + CLI
   gates.mjs               # hard/soft regression gates + CLI
+  judge.mjs               # LLM-as-judge deception pass (CLI + module)
   run.mjs                 # batch runner against /api/run, with concurrency
   profiles/
     stub-smoke.json       # 3-game scripted pipeline sanity (strict gates)
@@ -75,14 +76,17 @@ eval/       # eval framework
     omlx-qwen35-7p.json   # 10 games / 7 players — larger roster
     omlx-qwen35-hot.json  # temperature=0.7 variance probe
     omlx-large.json       # 50-game variance-analysis baseline
+    anthropic-haiku.json  # hosted Claude Haiku 4.5 (prompt cached system)
   baseline-refresh.mjs    # regenerate / verify eval/baselines/fixtures.json
   baselines/
     fixtures.json         # deterministic aggregate of eval/fixtures/
     README.md             # how to regenerate baselines
   fixtures/               # committed JSONL game logs for unit tests
-    village-win.jsonl
+    village-win.jsonl     # includes a target-override turn-stats event
     wolf-win.jsonl
     malformed-turn-stats.jsonl
+    judged/
+      with-judge-verdicts.jsonl  # exercises deception metric aggregation
   runs/                   # per-run output dirs (<profile>-<stamp>/)
 
 tests/      # all test suites
@@ -95,6 +99,7 @@ tests/      # all test suites
   referee.mjs             # sink abstraction + helpers + child supervision
   eval-aggregate.mjs
   eval-gates.mjs
+  eval-judge.mjs          # judge prompt builder + verdict parser + metric calc
   eval-run.mjs
   eval-deep.mjs           # multi-step scenarios: lifecycle, races, hostile inputs
 
@@ -309,6 +314,34 @@ After the 2026-05-19 reorganization the in-container paths changed
 (`/app/container/...`, `/app/lib/...`); the Dockerfile was updated to copy
 those directories. The next `bin/labctl smoke` run will exercise the new
 layout end to end.
+
+## Recent additions (2026-05-20)
+
+- **Orchestrator extraction** to `lib/referee.mjs` with a tiny sink contract.
+  Both `bin/lab-web-server.mjs` (HTTP NDJSON sink) and the new
+  `bin/referee.mjs` CLI (stdout sink) drive the same code.
+- **`target_override_rate`** in the aggregator + hard gate ceiling at 0.20.
+  `container/agent-act.sh` now emits `raw_target` / `normalized_target` /
+  `target_overridden` in the `__TURN_STATS__` marker.
+- **`per_phase` breakdown** under `prompt_following.per_phase` so the
+  scorecard distinguishes `day` / `vote` / `wolf` / `seer` / `doctor`
+  prompt-following rates. Catches phase-specific regressions that a flat
+  rate hides.
+- **`__INTENT__` marker** on each agent turn: agent / role / phase / round /
+  action / target / public_text / rationale. `lib/referee.mjs` parses it
+  and appends `agent-intent` events to the durable log.
+- **LLM-as-judge deception pass** in `eval/judge.mjs` + `tests/eval-judge.mjs`.
+  Walks `agent-intent` events, samples wolf day-phase utterances, calls a
+  judge model (OpenAI-compatible by default; configurable provider+model),
+  writes `judge-verdict` events. Aggregator folds them into
+  `deception.deception_production_rate` and
+  `deception.deception_detection_rate`.
+- **Anthropic provider branch** (`anthropic`) in `container/agent-act.sh`:
+  `/v1/messages` endpoint, `x-api-key` + `anthropic-version` headers,
+  `system` as a cached text block (`cache_control: { type: "ephemeral" }`),
+  `usage.input_tokens` / `output_tokens` normalized into the same
+  `tokens.prompt` / `tokens.completion` shape as OpenAI. New profile
+  `eval/profiles/anthropic-haiku.json`.
 
 ## Backlog
 

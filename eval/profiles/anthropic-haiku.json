@@ -1,0 +1,28 @@
+{
+  "name": "anthropic-haiku",
+  "description": "Hosted Anthropic Claude Haiku 4.5 run for cross-provider comparison against omlx-qwen35. The agent shim's anthropic branch sends system as a cached text block (prompt caching), so per-turn cost amortizes after the first call. Requires ANTHROPIC_API_KEY in the env that starts the web server.",
+  "provider": "anthropic",
+  "model": "claude-haiku-4-5-20251001",
+  "base_url": "https://api.anthropic.com",
+  "api_key_env": "ANTHROPIC_API_KEY",
+  "game_count": 10,
+  "concurrency": 1,
+  "max_rounds": 8,
+  "wolf_rotation_cap": 3,
+  "temperature": 0.2,
+  "max_tokens": 600,
+  "players": [
+    { "id": "p1", "role": "wolf" },
+    { "id": "p2", "role": "wolf" },
+    { "id": "p3", "role": "seer" },
+    { "id": "p4", "role": "doctor" },
+    { "id": "p5", "role": "villager" }
+  ],
+  "gates": {
+    "valid_json_rate_min": 0.95,
+    "action_in_phase_rate_min": 0.97,
+    "target_override_rate_max": 0.10,
+    "http_error_rate_max": 0.05,
+    "incomplete_rate_max": 0.10
+  }
+}

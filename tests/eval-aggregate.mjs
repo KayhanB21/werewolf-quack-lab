@@ -40,7 +40,7 @@ assert.equal(summary.game_id, "g1");
 assert.equal(summary.provider, "omlx");
 assert.equal(summary.players.length, 5);
 assert.equal(summary.roles.p1, "wolf");
-assert.equal(summary.turn_stats.length, 2);
+assert.equal(summary.turn_stats.length, 3);
 assert.equal(summary.lynch_count, 1);
 assert.equal(summary.no_lynch_count, 1);
 assert.equal(summary.wolf_kill_count, 1);
@@ -67,21 +67,29 @@ assert.equal(scorecard.meta.game_count, 3);
 assert.equal(scorecard.meta.completed_game_count, 2);
 assert.deepEqual(scorecard.meta.providers.sort(), ["omlx", "stub"]);
 
-// prompt-following over 4 turns total: g1=2, g2=1, g3=1
-assert.equal(scorecard.prompt_following.total_turns, 4);
-// valid_json: g1[0]=true, g1[1]=false, g2=false, g3=true → 2/4
-assert.equal(scorecard.prompt_following.valid_json_rate, 0.5);
-// action_in_phase: all 4 are true
+// prompt-following over 5 turns total: g1=3, g2=1, g3=1
+assert.equal(scorecard.prompt_following.total_turns, 5);
+// valid_json: g1[0]=true, g1[1]=false, g1[2]=true, g2=false, g3=true → 3/5
+assert.equal(scorecard.prompt_following.valid_json_rate, 0.6);
+// action_in_phase: all 5 are true
 assert.equal(scorecard.prompt_following.action_in_phase_rate, 1);
-// http_error_rate: 1/4
-assert.equal(scorecard.prompt_following.http_error_rate, 0.25);
+// target_override_rate: only g1[2] has target_overridden=true → 1/5
+assert.equal(scorecard.prompt_following.target_override_rate, 0.2);
+// http_error_rate: 1/5
+assert.equal(scorecard.prompt_following.http_error_rate, 0.2);
 // parse_path histogram
 assert.deepEqual(scorecard.prompt_following.parse_path_histogram, {
-  object: 1,
+  object: 2,
   text: 1,
   "http-error": 1,
   stub: 1,
 });
+// per_phase breakdown
+assert.equal(scorecard.prompt_following.per_phase.day.total, 4);
+assert.equal(scorecard.prompt_following.per_phase.day.valid_json_rate, 0.5);
+assert.equal(scorecard.prompt_following.per_phase.day.target_override_rate, 0);
+assert.equal(scorecard.prompt_following.per_phase.vote.total, 1);
+assert.equal(scorecard.prompt_following.per_phase.vote.target_override_rate, 1);
 
 // game-shape: 2 completed (g1=village, g3=wolves). 1 incomplete (g2)
 assert.equal(scorecard.game_shape.village_winrate, 0.5);
@@ -96,18 +104,20 @@ assert.equal(scorecard.game_shape.night_saved_rate, 1 / 3);
 // lynches total = 1 (g1), totalDays = 2
 assert.equal(scorecard.game_shape.lynch_rate_per_day, 0.5);
 
-// belief_quality: 4 turns, 1 turn with suspicions or knowledge => 0.25? Actually g1[0] has 1 suspicion, g3 has 1 knowledge → 2/4
-assert.equal(scorecard.belief_quality.belief_emit_rate, 0.5);
+// belief_quality: 5 turns, g1[0] has 1 suspicion, g3 has 1 knowledge → 2/5
+assert.equal(scorecard.belief_quality.belief_emit_rate, 0.4);
 // seer targets wolf: 1/1
 assert.equal(scorecard.belief_quality.seer_targeting_wolf_rate, 1);
 
-// performance: latencies > 0: 3000, 9000, 30000, 5 → avg = (3000+9000+30000+5)/4 = 10501.25, p50 = 9000
-assert.equal(scorecard.performance.avg_latency_ms, 10501);
-assert.equal(scorecard.performance.p50_latency_ms, 9000);
-// tokens > 0 from g1[0] and g1[1]: prompts [600, 600] avg 600
-assert.equal(scorecard.performance.avg_prompt_tokens, 600);
-assert.equal(scorecard.performance.total_prompt_tokens, 1200);
-assert.equal(scorecard.performance.total_reasoning_tokens, 80);
+// performance: latencies > 0: 3000, 9000, 2500, 30000, 5 → avg=8901
+assert.equal(scorecard.performance.avg_latency_ms, 8901);
+// p50 over sorted [5, 2500, 3000, 9000, 30000] -> idx floor(0.5*5)=2 -> 3000
+assert.equal(scorecard.performance.p50_latency_ms, 3000);
+// tokens > 0 from g1[0,1,2]: prompts [600, 600, 620] avg 607 (rounded), total 1820
+assert.equal(scorecard.performance.avg_prompt_tokens, 607);
+assert.equal(scorecard.performance.total_prompt_tokens, 1820);
+// reasoning: [80, 0, 40] total 120
+assert.equal(scorecard.performance.total_reasoning_tokens, 120);
 
 // per_game
 assert.equal(scorecard.per_game.length, 3);
@@ -118,9 +128,12 @@ assert.equal(scorecard.per_game[2].winner, "wolves");
 // summary string is non-empty and includes key labels
 const summaryString = formatScorecardSummary(scorecard);
 assert.match(summaryString, /games: 2\/3 completed/);
-assert.match(summaryString, /valid_json_rate     = 50\.0%/);
+assert.match(summaryString, /valid_json_rate     = 60\.0%/);
+assert.match(summaryString, /target_override     = 20\.0%/);
 assert.match(summaryString, /village_winrate     = 50\.0%/);
-assert.match(summaryString, /avg_latency_ms      = 10501/);
+assert.match(summaryString, /avg_latency_ms      = 8901/);
+assert.match(summaryString, /phase\[day/);
+assert.match(summaryString, /phase\[vote/);
 
 // === edge case: empty input ===
 const emptySc = aggregate([]);

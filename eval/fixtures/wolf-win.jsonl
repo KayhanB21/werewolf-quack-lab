@@ -1,5 +1,5 @@
 {"kind":"game-start","game_id":"g3","provider":"stub","model":"stub-werewolf-v1","players":[{"id":"p1","role":"wolf"},{"id":"p2","role":"villager"}]}
 {"kind":"round-start","round":1,"alive":["p1","p2"]}
-{"kind":"turn-stats","agent":"p1","role":"wolf","phase":"day","round":1,"provider":"stub","model":"stub","parse_path":"stub","valid_json":true,"raw_action":"speak","normalized_action":"speak","action_in_phase":true,"finish_reason":"","http_status":"","tokens":{"prompt":0,"completion":0,"reasoning":0},"latency_ms":5,"suspicions_count":0,"knowledge_count":1}
+{"kind":"turn-stats","agent":"p1","role":"wolf","phase":"day","round":1,"provider":"stub","model":"stub","parse_path":"stub","valid_json":true,"raw_action":"speak","normalized_action":"speak","raw_target":"","normalized_target":"","target_overridden":false,"action_in_phase":true,"finish_reason":"","http_status":"","tokens":{"prompt":0,"completion":0,"reasoning":0},"latency_ms":5,"suspicions_count":0,"knowledge_count":1}
 {"kind":"wolf-kill","round":1,"target":"p2","role":"villager"}
 {"kind":"game-end","winner":"wolves","reason":"wolves outnumber villagers","rounds":1}
