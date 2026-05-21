@@ -460,6 +460,38 @@ if ! jq -e '
   exit 1
 fi
 
+stats_embedded_sql="${TMP_DIR}/stats-embedded.sql"
+stats_embedded_pipe="${stats_embedded_sql}.fifo"
+stats_embedded_stdout="${TMP_DIR}/stats-embedded.stdout"
+mkfifo "${stats_embedded_pipe}"
+cat "${stats_embedded_pipe}" > "${stats_embedded_sql}" &
+stats_embedded_reader_pid="$!"
+
+env \
+  NODE_ID="agent-a" \
+  ROLE="villager" \
+  PARTNERS="" \
+  PLAYER_IDS="agent-a,agent-b,agent-d" \
+  LLM_PROVIDER="openai-compatible" \
+  LLM_BASE_URL="http://fake-openai.local/v1" \
+  FAKE_TURN_CONTENT=$'Here is my turn:\n```json\n{"action":"vote","target":"agent-b","public_text":"agent-a votes agent-b.","rationale":"b looks evasive."}\n```' \
+  CONTEXT_JSON='{}' \
+  WOLF_CHANNEL_JSON='[]' \
+  PATH="${fake_bin}:${PATH}" \
+  ACTION_PIPE="${stats_embedded_pipe}" \
+  "${ROOT_DIR}/container/agent-act.sh" --phase "vote" --round 4 >"${stats_embedded_stdout}"
+
+wait "${stats_embedded_reader_pid}"
+
+stats_embedded_line="$(grep -F "__TURN_STATS__" "${stats_embedded_stdout}" | tail -n1)"
+stats_embedded_json="${stats_embedded_line#*__TURN_STATS__ }"
+
+if ! jq -e '.parse_path == "extracted-object" and .valid_json == true and .normalized_action == "vote" and .normalized_target == "agent-b"' >/dev/null <<<"${stats_embedded_json}"; then
+  echo "embedded JSON turn-stats should record extracted-object valid_json=true" >&2
+  printf '%s\n' "${stats_embedded_json}" >&2
+  exit 1
+fi
+
 stats_text_sql="${TMP_DIR}/stats-text.sql"
 stats_text_pipe="${stats_text_sql}.fifo"
 stats_text_stdout="${TMP_DIR}/stats-text.stdout"

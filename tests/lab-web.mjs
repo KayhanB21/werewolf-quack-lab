@@ -17,6 +17,7 @@ import {
   resolveLynch,
   resolveNightOutcome,
   serializeRefereeEvent,
+  toContainerModelUrl,
   toHostModelUrl,
 } from "../lib/lab-web-actions.mjs";
 import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
@@ -105,6 +106,17 @@ assert.equal(omlxEnv.LLM_BASE_URL, "http://host.docker.internal:8000/v1");
 assert.equal(omlxEnv.LLM_API_KEY, "secret");
 assert.equal(omlxEnv.LLM_TIMEOUT_SECONDS, "180");
 
+const localOmlxEnv = buildLabEnv(
+  {
+    provider: "omlx",
+    model: "local-model",
+    baseUrl: "http://localhost:8000/v1/",
+    apiKey: "secret",
+  },
+  {},
+);
+assert.equal(localOmlxEnv.LLM_BASE_URL, "http://host.docker.internal:8000/v1");
+
 const openaiEnv = buildLabEnv({ provider: "openai", model: "gpt-test" }, {});
 assert.equal(openaiEnv.LLM_TIMEOUT_SECONDS, "60");
 
@@ -128,6 +140,10 @@ assert.equal(openaiNinePlayerConfig.model.model, "gpt-4o-mini");
 assert.equal(
   toHostModelUrl("http://host.docker.internal:8000/v1/"),
   "http://localhost:8000/v1/models",
+);
+assert.equal(
+  toContainerModelUrl("http://127.0.0.1:8000/v1/"),
+  "http://host.docker.internal:8000/v1",
 );
 
 const actionSummary = summarizeStep(

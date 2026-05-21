@@ -291,11 +291,34 @@ text_turn_json() {
     '{action: $action, target: $target, public_text: $public_text, rationale: $rationale}'
 }
 
-model_content_turn_json() {
+extract_json_object() {
   local content="$1"
+  python3 -c '
+import json
+import sys
+
+s = sys.stdin.read()
+decoder = json.JSONDecoder()
+for idx, ch in enumerate(s):
+    if ch != "{":
+        continue
+    try:
+        obj, _ = decoder.raw_decode(s[idx:])
+    except json.JSONDecodeError:
+        continue
+    if isinstance(obj, dict):
+        print(json.dumps(obj, separators=(",", ":")))
+        sys.exit(0)
+sys.exit(1)
+' <<<"${content}"
+}
+
+structured_turn_json() {
+  local content="$1"
+  local parse_path="$2"
 
   if jq -e 'type == "object"' >/dev/null 2>&1 <<<"${content}"; then
-    stats_set parse_path "object"
+    stats_set parse_path "${parse_path}"
     stats_set valid_json "true"
     stats_set raw_action "$(jq -r '.action // ""' <<<"${content}" 2>/dev/null || true)"
     jq -c '
@@ -309,6 +332,21 @@ model_content_turn_json() {
         knowledge: (if (.knowledge // null) | type == "array" then .knowledge else [] end)
       }
     ' <<<"${content}"
+    return 0
+  fi
+  return 1
+}
+
+model_content_turn_json() {
+  local content="$1"
+
+  if structured_turn_json "${content}" "object"; then
+    return 0
+  fi
+
+  local extracted
+  if extracted="$(extract_json_object "${content}")"; then
+    structured_turn_json "${extracted}" "extracted-object"
     return 0
   fi
 
@@ -369,7 +407,7 @@ Action type by phase:
 - seer (you are the seer): action=seer-investigate, target=an alive non-self id, public_text must be empty.
 - doctor (you are the doctor): action=doctor-save, target=any alive id including yourself, public_text must be empty.
 
-The word JSON is required. Keep rationale honest and private. Keep public_text consistent with your bluff or claim. Never reveal that you are an LLM or break character."
+Respond with only the JSON object, no markdown fence, no prose before it, and no prose after it. Keep rationale honest and private. Keep public_text consistent with your bluff or claim. Never reveal that you are an LLM or break character."
   local payload
   payload="$(
     jq -n \
@@ -488,7 +526,7 @@ Action type by phase:
 - seer (you are the seer): action=seer-investigate, target=an alive non-self id, public_text must be empty.
 - doctor (you are the doctor): action=doctor-save, target=any alive id including yourself, public_text must be empty.
 
-Respond with only the JSON object, no prose. Keep rationale honest and private. Keep public_text consistent with your bluff or claim. Never reveal that you are an LLM or break character."
+Respond with only the JSON object, no markdown fence, no prose before it, and no prose after it. Keep rationale honest and private. Keep public_text consistent with your bluff or claim. Never reveal that you are an LLM or break character."
 
   # Anthropic accepts system as a string OR as an array of content blocks.
   # The array form unlocks prompt caching, which matters because the system

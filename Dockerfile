@@ -10,6 +10,7 @@ RUN apt-get update \
     curl \
     jq \
     openssl \
+    python3 \
     unzip \
   && rm -rf /var/lib/apt/lists/*
 
