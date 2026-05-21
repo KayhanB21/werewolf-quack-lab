@@ -1,5 +1,6 @@
 {
   "name": "omlx-qwen35-7p",
+  "scenario_id": "wolf-parity-7p",
   "description": "7-player omlx run: 2 wolves, 1 seer, 1 doctor, 3 villagers. Tests larger rosters where the wolf rotation cap matters and prompt context grows. Watch avg_rounds and wolf_kill_count for sanity.",
   "provider": "omlx",
   "model": "MLX-Qwen3.5-9B-DeepSeek-V4-Flash-4bit",

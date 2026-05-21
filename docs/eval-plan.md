@@ -2,6 +2,13 @@
 
 ## Status: what's landed (2026-05-19)
 
+**2026-05-21 note:** this original plan has been extended by
+`docs/research-eval-plan.md`. The current tree now includes the Anthropic
+provider branch, LLM-as-judge deception pass, research-grade statement /
+belief / wolf-consensus log events, promptfoo wiring, an Inspect AI wrapper,
+run manifests, and comparison reports. The older "not yet built" notes below
+are preserved as historical design context.
+
 The eval framework is now built and tested. Highlights:
 
 - **Per-turn instrumentation** in `container/agent-act.sh`: each agent turn

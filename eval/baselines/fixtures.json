@@ -58,7 +58,19 @@
     },
     "lynch_rate_per_day": 0.5,
     "night_saved_rate": 0.3333333333333333,
-    "no_kill_rate": 0
+    "no_kill_rate": 0,
+    "avg_wolf_rotations_to_consensus": 0,
+    "wolf_consensus_rate": 0,
+    "mean_survival_curve": [
+      {
+        "round": 1,
+        "alive_count": 3
+      },
+      {
+        "round": 2,
+        "alive_count": 4
+      }
+    ]
   },
   "belief_quality": {
     "belief_emit_rate": 0.4,
@@ -66,9 +78,31 @@
     "avg_knowledge_per_turn": 0.2,
     "seer_targeting_wolf_rate": 1
   },
+  "strategy": {
+    "vote_accuracy": 0,
+    "accusation_accuracy": 0,
+    "town_vote_accuracy": 0,
+    "town_accusation_accuracy": 0,
+    "seer_reveal_rate": 0,
+    "doctor_save_value": 0.3333333333333333
+  },
+  "trust_dynamics": {
+    "suspicion_entries": 0,
+    "avg_suspicion_wolf": 0,
+    "avg_suspicion_town": 0,
+    "wolf_town_suspicion_gap": 0,
+    "false_positive_special_rate": 0,
+    "peer_assessment_count": 0,
+    "peer_deception_detection_rate": null
+  },
   "deception": {
     "deception_production_rate": null,
     "deception_detection_rate": null,
+    "deception_detection_precision": null,
+    "deception_detection_recall": null,
+    "deception_detection_f1": null,
+    "deception_category_histogram": {},
+    "judge_disagreement_rate": null,
     "judged_utterances": 0,
     "judge_models": []
   },
@@ -99,7 +133,10 @@
       "no_kill": 0,
       "seer_learns": 0,
       "seer_targeted_wolf": 0,
-      "turn_count": 1
+      "turn_count": 1,
+      "statements": 0,
+      "belief_events": 0,
+      "wolf_consensus_events": 0
     },
     {
       "game_id": "g1",
@@ -116,7 +153,10 @@
       "no_kill": 0,
       "seer_learns": 1,
       "seer_targeted_wolf": 1,
-      "turn_count": 3
+      "turn_count": 3,
+      "statements": 0,
+      "belief_events": 0,
+      "wolf_consensus_events": 0
     },
     {
       "game_id": "g3",
@@ -133,7 +173,10 @@
       "no_kill": 0,
       "seer_learns": 0,
       "seer_targeted_wolf": 0,
-      "turn_count": 1
+      "turn_count": 1,
+      "statements": 0,
+      "belief_events": 0,
+      "wolf_consensus_events": 0
     }
   ]
 }

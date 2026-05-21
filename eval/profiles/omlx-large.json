@@ -1,5 +1,6 @@
 {
   "name": "omlx-large",
+  "scenario_id": "wolf-parity-5p-large",
   "description": "50-game variance-analysis profile against local omlx + Qwen3.5-9B-DeepSeek-V4-Flash-4bit. Same shape as omlx-qwen35 but larger N, so a single regression has a more reliable signal. Bump to 100 only if stddev across runs is wider than the gate bands. Expects the host omlx server on localhost:8000.",
   "provider": "omlx",
   "model": "MLX-Qwen3.5-9B-DeepSeek-V4-Flash-4bit",

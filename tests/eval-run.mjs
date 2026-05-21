@@ -8,6 +8,7 @@ import {
   buildRunRequestBody,
   extractDoneOk,
   extractDurableLogPath,
+  hashProfile,
   runProfile,
   validateProfile,
 } from "../eval/run.mjs";
@@ -100,6 +101,8 @@ const capProfile = validateProfile({
   ],
 });
 assert.equal(capProfile.wolf_rotation_cap, 5);
+assert.equal(hashProfile({ b: 2, a: 1 }), hashProfile({ a: 1, b: 2 }));
+assert.notEqual(hashProfile({ a: 1 }), hashProfile({ a: 2 }));
 
 // === buildRunRequestBody ===
 const body = buildRunRequestBody(validated, "secret");
@@ -225,6 +228,11 @@ try {
   assert.equal(result.gateReport.pass, true, "stub-mocked games hit every gate");
   const gatesWritten = JSON.parse(await readFile(join(outDir, "gates.json"), "utf8"));
   assert.equal(gatesWritten.pass, true);
+  const manifestWritten = JSON.parse(await readFile(join(outDir, "manifest.json"), "utf8"));
+  assert.equal(manifestWritten.profile_name, "mock-smoke");
+  assert.equal(manifestWritten.scenario_id, "mock-smoke");
+  assert.equal(manifestWritten.completed_games, 3);
+  assert.ok(manifestWritten.profile_hash);
 } finally {
   await rm(tmpDir, { recursive: true, force: true });
 }

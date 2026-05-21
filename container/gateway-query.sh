@@ -14,8 +14,9 @@ mkdir -p "${DATA_DIR}"
 : "${PLAYERS_JSON:?PLAYERS_JSON is required}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LAB_SPAN_PATH="${LAB_SPAN_PATH:-${SCRIPT_DIR}/../lib/lab-span.sh}"
 # shellcheck source=/dev/null
-source "${SCRIPT_DIR}/lab-span.sh"
+source "${LAB_SPAN_PATH}"
 
 mapfile -t PLAYER_HOSTS < <(jq -r '.[].id' <<<"${PLAYERS_JSON}")
 TOKEN="$(LAB_QUACK_SECRET="${LAB_QUACK_SECRET}" /app/lib/mint-token.sh "${QUERY_NAME}" 60 gateway)"

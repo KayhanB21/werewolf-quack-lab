@@ -1,0 +1,19 @@
+description: "werewolf-quack-lab research eval matrix"
+
+prompts:
+  - "Run the werewolf eval profile {{profile}}"
+
+providers:
+  - id: file://providers/werewolf-run.mjs
+    label: local-omlx-mini
+    config:
+      profile: eval/profiles/omlx-qwen35-mini.json
+      server: http://localhost:5174
+
+tests:
+  - description: "local omlx daily research smoke"
+    vars:
+      profile: eval/profiles/omlx-qwen35-mini.json
+  - description: "stub pipeline sanity"
+    vars:
+      profile: eval/profiles/stub-smoke.json

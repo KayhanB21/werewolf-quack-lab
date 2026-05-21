@@ -1,5 +1,6 @@
 {
   "name": "omlx-qwen35-mini",
+  "scenario_id": "local-core-3p",
   "description": "5-game minimal omlx smoke. 3 players (1 wolf, 1 seer, 1 doctor) is the smallest roster that still exercises every phase. Use this as the daily-driver check before running larger profiles. Gate floors match the live model's expected behavior.",
   "provider": "omlx",
   "model": "MLX-Qwen3.5-9B-DeepSeek-V4-Flash-4bit",

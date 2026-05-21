@@ -1,5 +1,6 @@
 {
   "name": "omlx-qwen35",
+  "scenario_id": "local-core-5p",
   "description": "Local MLX (omlx) running the Qwen3.5-9B-DeepSeek-V4-Flash-4bit model. Requires thinking_budget>0 to escape unbounded CoT loops. api_key_env defaults to OMLX_API_KEY; set base_url to point at the host's omlx server (the lab-web-actions layer rewrites it to host.docker.internal for containers).",
   "provider": "omlx",
   "model": "MLX-Qwen3.5-9B-DeepSeek-V4-Flash-4bit",

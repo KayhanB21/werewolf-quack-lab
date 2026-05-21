@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { mkdir, readFile, writeFile, copyFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { aggregate, formatScorecardSummary, loadGameLogs } from "./aggregate.mjs";
@@ -9,6 +11,39 @@ const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 const REQUIRED_FIELDS = ["name", "provider", "game_count", "players"];
 const ROLE_REQUIREMENTS = ["wolf", "seer", "doctor"];
+
+function stableStringify(value) {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function hashProfile(profile) {
+  return createHash("sha256").update(stableStringify(profile)).digest("hex").slice(0, 16);
+}
+
+async function gitCommit() {
+  return new Promise((resolve) => {
+    execFile("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOT_DIR }, (error, stdout) => {
+      if (error) resolve("");
+      else resolve(stdout.trim());
+    });
+  });
+}
+
+function urlHost(value) {
+  if (!value) return "";
+  try {
+    return new URL(value).host;
+  } catch {
+    return String(value);
+  }
+}
 
 export function validateProfile(profile) {
   if (!profile || typeof profile !== "object") {
@@ -51,6 +86,8 @@ export function validateProfile(profile) {
     api_key_env: profile.api_key_env ?? "",
     gates: profile.gates ?? null,
     baseline_path: profile.baseline_path ?? null,
+    scenario_id: profile.scenario_id ?? profile.name,
+    judge: profile.judge ?? null,
   };
 }
 
@@ -149,10 +186,35 @@ export async function runProfile(profile, opts = {}) {
   const server = opts.server || "http://localhost:5174";
   const apiKey = opts.apiKey || (validated.api_key_env ? process.env[validated.api_key_env] || "" : "");
   const writeOut = opts.writeOut !== false;
+  const startedAt = new Date().toISOString();
 
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
   const outDir = opts.outDir || path.join(ROOT_DIR, "eval", "runs", `${validated.name}-${stamp}`);
   if (writeOut) await mkdir(outDir, { recursive: true });
+  const manifest = {
+    run_id: `${validated.name}-${stamp}`,
+    started_at: startedAt,
+    profile_name: validated.name,
+    scenario_id: validated.scenario_id,
+    profile_hash: hashProfile(validated),
+    git_commit: await gitCommit(),
+    server,
+    provider: validated.provider,
+    model: validated.model || "",
+    base_url_class: urlHost(validated.base_url),
+    game_count: validated.game_count,
+    concurrency: validated.concurrency,
+    max_rounds: validated.max_rounds,
+    wolf_rotation_cap: validated.wolf_rotation_cap,
+    thinking_budget: validated.thinking_budget,
+    temperature: validated.temperature,
+    max_tokens: validated.max_tokens,
+    players: validated.players,
+    judge: validated.judge,
+  };
+  if (writeOut) {
+    await writeFile(path.join(outDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  }
 
   const queue = [...Array(validated.game_count).keys()];
   const results = new Array(validated.game_count);
@@ -207,7 +269,13 @@ export async function runProfile(profile, opts = {}) {
     }
   }
 
-  return { profile: validated, results, scorecard, gateReport, outDir };
+  if (writeOut) {
+    manifest.completed_at = new Date().toISOString();
+    manifest.completed_games = scorecard?.meta?.completed_game_count ?? 0;
+    await writeFile(path.join(outDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  }
+
+  return { profile: validated, results, scorecard, gateReport, outDir, manifest };
 }
 
 const isMain = import.meta.url === `file://${process.argv[1]}`;

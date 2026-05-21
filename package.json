@@ -1,0 +1,14 @@
+{
+  "name": "werewolf-quack-lab",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "eval:local": "node ./eval/run.mjs ./eval/profiles/omlx-qwen35-mini.json",
+    "eval:matrix": "promptfoo eval -c ./eval/promptfooconfig.yaml",
+    "eval:report": "node ./eval/report.mjs ./eval/runs",
+    "eval:hosted": "node ./eval/run.mjs ./eval/profiles/anthropic-haiku.json"
+  },
+  "devDependencies": {
+    "promptfoo": "0.119.11"
+  }
+}

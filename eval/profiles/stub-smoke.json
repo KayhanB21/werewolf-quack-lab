@@ -1,5 +1,6 @@
 {
   "name": "stub-smoke",
+  "scenario_id": "pipeline-stub",
   "description": "Tiny pipeline-sanity profile. Uses the scripted stub provider so it never touches an external LLM. Useful for CI to confirm the eval/durable-log path produces a parseable scorecard.",
   "provider": "stub",
   "model": "stub-werewolf-v1",

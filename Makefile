@@ -1,4 +1,4 @@
-.PHONY: up down logs test web web-dev web-test eval-test eval-run eval-large eval-mini eval-nothink eval-7p eval-hot eval-anthropic eval-all-omlx baseline-refresh baseline-check whoami public wolf full denied shell
+.PHONY: up down logs test web web-dev web-test eval-test eval-run eval-report eval-matrix eval-inspect-test eval-large eval-mini eval-nothink eval-7p eval-hot eval-anthropic eval-all-omlx baseline-refresh baseline-check whoami public wolf full denied shell
 
 up:
 	./bin/labctl up
@@ -28,10 +28,20 @@ eval-test:
 	node ./tests/eval-run.mjs
 	node ./tests/eval-judge.mjs
 	node ./tests/eval-deep.mjs
+	node ./tests/eval-report.mjs
 
 eval-run:
 	@if [ -z "$(PROFILE)" ]; then echo "usage: make eval-run PROFILE=eval/profiles/stub-smoke.json"; exit 1; fi
 	node ./eval/run.mjs $(PROFILE)
+
+eval-report:
+	node ./eval/report.mjs ./eval/runs --out ./eval/runs/report.md --json ./eval/runs/report.json
+
+eval-matrix:
+	npm run eval:matrix
+
+eval-inspect-test:
+	uv run --project eval/inspect python -m py_compile eval/inspect/werewolf_task.py
 
 eval-large:
 	node ./eval/run.mjs ./eval/profiles/omlx-large.json

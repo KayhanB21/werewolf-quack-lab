@@ -42,7 +42,7 @@ USAGE
 
 ensure_generated() {
   if [[ ! -f "${OUT_DIR}/docker-compose.yml" || ! -f "${OUT_DIR}/players.json" ]]; then
-    ./bin/generate-compose.sh --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}"
+    ./lib/generate-compose.sh --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}"
   fi
 }
 
@@ -162,10 +162,10 @@ ref_elim() {
 
 case "${1:-}" in
   generate)
-    ./bin/generate-compose.sh --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}"
+    ./lib/generate-compose.sh --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}"
     ;;
   up)
-    ./bin/generate-compose.sh --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}"
+    ./lib/generate-compose.sh --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}"
     compose up --build -d --force-recreate
     ;;
   down)
@@ -205,7 +205,7 @@ case "${1:-}" in
     ref_elim "${2:-}" "${3:-}" "${4:-}" "${5:-}"
     ;;
   smoke)
-    ./bin/generate-compose.sh --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}"
+    ./lib/generate-compose.sh --config "${CONFIG_PATH}" --out-dir "${OUT_DIR}"
     compose up --build -d --force-recreate
     run_agent_action "day" '.[].id'
     run_agent_action "wolf" '.[] | select(.role == "wolf") | .id'

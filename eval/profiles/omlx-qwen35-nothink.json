@@ -1,5 +1,6 @@
 {
   "name": "omlx-qwen35-nothink",
+  "scenario_id": "scaffolding-ablation-nothink",
   "description": "Counterfactual: same model, same roster as omlx-qwen35, but thinking_budget=0. Used to quantify what reasoning buys us. Expect substantially worse seer_targeting_wolf_rate and possibly worse valid_json_rate. Gate floors loosened to allow the model to fail gracefully without flaking the build.",
   "provider": "omlx",
   "model": "MLX-Qwen3.5-9B-DeepSeek-V4-Flash-4bit",

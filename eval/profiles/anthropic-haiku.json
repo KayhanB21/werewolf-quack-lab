@@ -1,5 +1,6 @@
 {
   "name": "anthropic-haiku",
+  "scenario_id": "arena-matrix-anthropic-haiku",
   "description": "Hosted Anthropic Claude Haiku 4.5 run for cross-provider comparison against omlx-qwen35. The agent shim's anthropic branch sends system as a cached text block (prompt caching), so per-turn cost amortizes after the first call. Requires ANTHROPIC_API_KEY in the env that starts the web server.",
   "provider": "anthropic",
   "model": "claude-haiku-4-5-20251001",

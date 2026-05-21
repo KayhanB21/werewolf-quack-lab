@@ -221,6 +221,9 @@ make web-dev    Start the browser runner with file watching and browser reload
 make web-test   Run the orchestrator unit checks (tests/lab-web.mjs)
 make eval-test  Run the eval framework unit checks
 make eval-run PROFILE=eval/profiles/<name>.json  Run a batch eval profile
+make eval-report Compare eval/runs into Markdown and JSON
+make eval-matrix Run the promptfoo matrix (requires npm install + running web server)
+make eval-inspect-test  Syntax-check the Inspect wrapper through uv
 make eval-large Run the 50-game omlx variance profile
 make eval-mini  Run the 5-game / 3-player omlx daily smoke
 make eval-nothink   Run the thinking_budget=0 omlx counterfactual
@@ -233,6 +236,12 @@ make baseline-check     Verify the committed baseline matches the aggregator
 make test       Run agent, generator, web, eval, and real Quack smoke checks
 make down       Stop the generated lab
 ```
+
+Research-grade eval details live in `docs/research-eval-plan.md`. The local
+`omlx` path remains the default: run a profile with `make eval-mini` or
+`make eval-run PROFILE=...`, then use `eval/report.mjs` to compare scorecards.
+Each run directory contains `manifest.json`, `scorecard.json`, `gates.json`, and
+copied durable game logs.
 
 `full_log` reads from `post_game_intents`. By default the player nodes start with
 `POST_GAME=false`, so the view returns no rows. Set `POST_GAME=true` before

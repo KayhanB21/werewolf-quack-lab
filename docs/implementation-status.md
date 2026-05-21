@@ -67,7 +67,13 @@ eval/       # eval framework
   aggregate.mjs           # pure aggregator + CLI
   gates.mjs               # hard/soft regression gates + CLI
   judge.mjs               # LLM-as-judge deception pass (CLI + module)
+  report.mjs              # compare run dirs; Markdown/JSON report + bootstrap CIs
   run.mjs                 # batch runner against /api/run, with concurrency
+  promptfooconfig.yaml    # promptfoo matrix using the Node runner provider
+  providers/
+    werewolf-run.mjs      # promptfoo custom JS provider
+  inspect/
+    werewolf_task.py      # Inspect AI wrapper around node eval/run.mjs
   profiles/
     stub-smoke.json       # 3-game scripted pipeline sanity (strict gates)
     omlx-qwen35-mini.json # 5 games / 3 players — daily smoke
@@ -102,8 +108,10 @@ tests/      # all test suites
   eval-judge.mjs          # judge prompt builder + verdict parser + metric calc
   eval-run.mjs
   eval-deep.mjs           # multi-step scenarios: lifecycle, races, hostile inputs
+  eval-report.mjs
 
 docs/       # roadmap, architecture, eval-plan, this status
+  research-eval-plan.md   # research-grade eval workflow and benchmark mapping
 ```
 
 Inside the player and gateway containers the paths become `/app/container/...`
@@ -342,6 +350,11 @@ layout end to end.
   `usage.input_tokens` / `output_tokens` normalized into the same
   `tokens.prompt` / `tokens.completion` shape as OpenAI. New profile
   `eval/profiles/anthropic-haiku.json`.
+- **Research-grade eval layer**: durable logs now include derived
+  `statement`, `belief`, and `wolf-consensus` events; the scorecard adds
+  strategy, trust-dynamics, extended deception, and survival-curve metrics.
+  `eval/run.mjs` writes `manifest.json`, `eval/report.mjs` compares runs with
+  bootstrap CIs, and promptfoo / Inspect wrappers live under `eval/`.
 
 ## Backlog
 

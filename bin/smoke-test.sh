@@ -15,4 +15,5 @@ node "${ROOT_DIR}/tests/eval-gates.mjs"
 node "${ROOT_DIR}/tests/eval-run.mjs"
 node "${ROOT_DIR}/tests/eval-judge.mjs"
 node "${ROOT_DIR}/tests/eval-deep.mjs"
+node "${ROOT_DIR}/tests/eval-report.mjs"
 "${ROOT_DIR}/bin/labctl" smoke
