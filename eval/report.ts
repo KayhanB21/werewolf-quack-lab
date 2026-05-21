@@ -1,18 +1,62 @@
 #!/usr/bin/env node
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { aggregate } from "./aggregate.ts";
 
-function pct(n) {
+type Scorecard = ReturnType<typeof aggregate>;
+type ConfidenceInterval = { mean: number; low: number; high: number; n: number };
+type RunSummary = {
+  dir: string;
+  manifest: Record<string, unknown>;
+  scorecard: Scorecard;
+  ci: {
+    village_winrate: ConfidenceInterval;
+    wolves_winrate: ConfidenceInterval;
+  };
+};
+type ReportRow = {
+  run: string;
+  scenario: string;
+  provider: string;
+  model: string;
+  games: number;
+  completed: number;
+  valid_json_rate: number;
+  target_override_rate: number;
+  village_winrate: number;
+  village_winrate_ci: ConfidenceInterval;
+  deception_production_rate: number | null;
+  deception_detection_f1: number | null;
+  town_vote_accuracy: number;
+  suspicion_gap: number;
+  p95_latency_ms: number;
+  total_tokens: number;
+};
+type ComparisonReport = {
+  generated_at: string;
+  run_count: number;
+  rows: ReportRow[];
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function str(value: unknown): string {
+  return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+function pct(n: unknown): string {
   if (typeof n !== "number" || !Number.isFinite(n)) return "n/a";
   return `${(n * 100).toFixed(1)}%`;
 }
 
-function num(n, digits = 2) {
+function num(n: unknown, digits = 2): string {
   if (typeof n !== "number" || !Number.isFinite(n)) return "n/a";
   return n.toFixed(digits);
 }
 
-function seededRand(seed) {
+function seededRand(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
     state = (state * 1664525 + 1013904223) >>> 0;
@@ -20,21 +64,24 @@ function seededRand(seed) {
   };
 }
 
-function mean(values) {
+function mean(values: number[]): number {
   if (values.length === 0) return 0;
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
-function quantile(sorted, q) {
+function quantile(sorted: number[], q: number): number {
   if (sorted.length === 0) return 0;
   return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
 }
 
-export function bootstrapBinaryCi(values, { iterations = 500, seed = 0x51f15e } = {}) {
+export function bootstrapBinaryCi(
+  values: number[],
+  { iterations = 500, seed = 0x51f15e }: { iterations?: number; seed?: number } = {},
+): ConfidenceInterval {
   const xs = values.filter((v) => v === 0 || v === 1);
   if (xs.length === 0) return { mean: 0, low: 0, high: 0, n: 0 };
   const rand = seededRand(seed);
-  const samples = [];
+  const samples: number[] = [];
   for (let i = 0; i < iterations; i += 1) {
     let sum = 0;
     for (let j = 0; j < xs.length; j += 1) {
@@ -46,15 +93,16 @@ export function bootstrapBinaryCi(values, { iterations = 500, seed = 0x51f15e } 
   return { mean: mean(xs), low: quantile(samples, 0.025), high: quantile(samples, 0.975), n: xs.length };
 }
 
-async function loadRun(dir) {
-  const scorecard = JSON.parse(await readFile(path.join(dir, "scorecard.json"), "utf8"));
-  const manifest = JSON.parse(await readFile(path.join(dir, "manifest.json"), "utf8").catch(() => "{}"));
+async function loadRun(dir: string): Promise<RunSummary> {
+  const scorecard = JSON.parse(await readFile(path.join(dir, "scorecard.json"), "utf8")) as Scorecard;
+  const parsedManifest = JSON.parse(await readFile(path.join(dir, "manifest.json"), "utf8").catch(() => "{}")) as unknown;
+  const manifest = isRecord(parsedManifest) ? parsedManifest : {};
   const villageValues = (scorecard.per_game || [])
-    .filter((g) => g.completed)
-    .map((g) => (g.winner === "village" ? 1 : 0));
+    .filter((g: Scorecard["per_game"][number]) => g.completed)
+    .map((g: Scorecard["per_game"][number]) => (g.winner === "village" ? 1 : 0));
   const wolvesValues = (scorecard.per_game || [])
-    .filter((g) => g.completed)
-    .map((g) => (g.winner === "wolves" || g.winner === "wolf" ? 1 : 0));
+    .filter((g: Scorecard["per_game"][number]) => g.completed)
+    .map((g: Scorecard["per_game"][number]) => (g.winner === "wolves" || g.winner === "wolf" ? 1 : 0));
   return {
     dir,
     manifest,
@@ -66,8 +114,8 @@ async function loadRun(dir) {
   };
 }
 
-export async function discoverRuns(targets) {
-  const dirs = [];
+export async function discoverRuns(targets: string[]): Promise<RunSummary[]> {
+  const dirs: string[] = [];
   for (const target of targets) {
     let info;
     try {
@@ -101,14 +149,14 @@ export async function discoverRuns(targets) {
   return Promise.all(dirs.map(loadRun));
 }
 
-export function buildReport(runs) {
+export function buildReport(runs: RunSummary[]): ComparisonReport {
   const rows = runs.map((run) => {
     const sc = run.scorecard;
     return {
-      run: run.manifest.run_id || path.basename(run.dir),
-      scenario: run.manifest.scenario_id || run.manifest.profile_name || "",
-      provider: sc.meta.providers.join(",") || run.manifest.provider || "",
-      model: sc.meta.models.join(",") || run.manifest.model || "",
+      run: str(run.manifest.run_id || path.basename(run.dir)),
+      scenario: str(run.manifest.scenario_id || run.manifest.profile_name || ""),
+      provider: str(sc.meta.providers.join(",") || run.manifest.provider || ""),
+      model: str(sc.meta.models.join(",") || run.manifest.model || ""),
       games: sc.meta.game_count,
       completed: sc.meta.completed_game_count,
       valid_json_rate: sc.prompt_following.valid_json_rate,
@@ -129,8 +177,8 @@ export function buildReport(runs) {
   return { generated_at: new Date().toISOString(), run_count: rows.length, rows };
 }
 
-export function formatMarkdown(report) {
-  const lines = [];
+export function formatMarkdown(report: ComparisonReport): string {
+  const lines: string[] = [];
   lines.push("# Werewolf Eval Comparison");
   lines.push("");
   lines.push(`Generated: ${report.generated_at}`);
@@ -154,7 +202,7 @@ const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
   const args = process.argv.slice(2);
   if (args.length === 0) {
-    console.error("usage: eval/report.mjs <run-dir|runs-parent>... [--out report.md] [--json report.json]");
+    console.error("usage: eval/report.ts <run-dir|runs-parent>... [--out report.md] [--json report.json]");
     process.exit(2);
   }
   const outIdx = args.indexOf("--out");
@@ -167,7 +215,9 @@ if (isMain) {
   }
   const report = buildReport(runs);
   const markdown = formatMarkdown(report);
-  if (outIdx >= 0) await writeFile(args[outIdx + 1], `${markdown}\n`);
+  const outPath = outIdx >= 0 ? args[outIdx + 1] : undefined;
+  const jsonPath = jsonIdx >= 0 ? args[jsonIdx + 1] : undefined;
+  if (outPath) await writeFile(outPath, `${markdown}\n`);
   else process.stdout.write(`${markdown}\n`);
-  if (jsonIdx >= 0) await writeFile(args[jsonIdx + 1], `${JSON.stringify(report, null, 2)}\n`);
+  if (jsonPath) await writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`);
 }

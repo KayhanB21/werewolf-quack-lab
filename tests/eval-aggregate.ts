@@ -10,11 +10,18 @@ import {
   loadGameLogs,
   parseGameLog,
   summarizeGame,
-} from "../eval/aggregate.mjs";
+  type GameEvent,
+} from "../eval/aggregate.ts";
 
 const FIXTURES_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "eval", "fixtures");
-async function loadFixture(name) {
+async function loadFixture(name: string): Promise<GameEvent[]> {
   return parseGameLog(await readFile(join(FIXTURES_DIR, name), "utf8"));
+}
+
+function stableScorecard(sc: ReturnType<typeof aggregate>): unknown {
+  const { generated_at: _generatedAt, ...meta } = sc.meta;
+  const perGame = sc.per_game.map(({ path: _path, ...game }) => game);
+  return { ...sc, meta, per_game: perGame };
 }
 
 // === unit: parseGameLog ===
@@ -30,8 +37,8 @@ const parsed = parseGameLog(
   ].join("\n"),
 );
 assert.equal(parsed.length, 2);
-assert.equal(parsed[0].kind, "game-start");
-assert.equal(parsed[1].round, 1);
+assert.equal(parsed[0]?.kind, "game-start");
+assert.equal(parsed[1]?.round, 1);
 
 // === unit: summarizeGame ===
 const fixtureEvents = await loadFixture("village-win.jsonl");
@@ -121,9 +128,9 @@ assert.equal(scorecard.performance.total_reasoning_tokens, 120);
 
 // per_game
 assert.equal(scorecard.per_game.length, 3);
-assert.equal(scorecard.per_game[0].winner, "village");
-assert.equal(scorecard.per_game[1].completed, false);
-assert.equal(scorecard.per_game[2].winner, "wolves");
+assert.equal(scorecard.per_game[0]?.winner, "village");
+assert.equal(scorecard.per_game[1]?.completed, false);
+assert.equal(scorecard.per_game[2]?.winner, "wolves");
 
 // === research metrics: strategy, trust, deception, and survival curve ===
 {
@@ -240,7 +247,7 @@ try {
   // single-file load
   const singleLoaded = await loadGameLogs(join(tmpDir, "game-a.jsonl"));
   assert.equal(singleLoaded.length, 1);
-  assert.equal(singleLoaded[0].events.length, fixtureEvents.length);
+  assert.equal(singleLoaded[0]?.events.length, fixtureEvents.length);
 } finally {
   await rm(tmpDir, { recursive: true, force: true });
 }
@@ -250,8 +257,7 @@ try {
 // inter-event ordering dependencies, so shuffling must not change the result)
 {
   const allFixtures = await loadGameLogs(FIXTURES_DIR);
-  const baseline = aggregate(allFixtures);
-  delete baseline.meta.generated_at;
+  const baseline = stableScorecard(aggregate(allFixtures));
 
   // PRNG with fixed seed so the test is deterministic
   let state = 0xdeadbeef;
@@ -269,8 +275,7 @@ try {
       }
       return { path: p, events: evs };
     });
-    const trialSc = aggregate(shuffled);
-    delete trialSc.meta.generated_at;
+    const trialSc = stableScorecard(aggregate(shuffled));
     assert.deepEqual(
       trialSc,
       baseline,
@@ -282,16 +287,14 @@ try {
 // === baseline regression: aggregating committed fixtures must match the committed scorecard ===
 {
   const games = await loadGameLogs(FIXTURES_DIR);
-  const sc = aggregate(games);
-  delete sc.meta.generated_at;
-  for (const g of sc.per_game) delete g.path;
+  const sc = stableScorecard(aggregate(games));
 
   const baselinePath = resolve(FIXTURES_DIR, "..", "baselines", "fixtures.json");
   const baseline = JSON.parse(await readFile(baselinePath, "utf8"));
   assert.deepEqual(
     sc,
     baseline,
-    `eval/baselines/fixtures.json drifted from aggregator output. Regenerate with:\n  node -e "import('./eval/aggregate.mjs').then(async m=>{const g=await m.loadGameLogs('eval/fixtures');const s=m.aggregate(g);delete s.meta.generated_at;for(const x of s.per_game)delete x.path;process.stdout.write(JSON.stringify(s,null,2)+'\\n')})" > eval/baselines/fixtures.json`,
+    `eval/baselines/fixtures.json drifted from aggregator output. Regenerate with:\n  node -e "import('./eval/aggregate.ts').then(async m=>{const g=await m.loadGameLogs('eval/fixtures');const s=m.aggregate(g);delete s.meta.generated_at;for(const x of s.per_game)delete x.path;process.stdout.write(JSON.stringify(s,null,2)+'\\n')})" > eval/baselines/fixtures.json`,
   );
 }
 

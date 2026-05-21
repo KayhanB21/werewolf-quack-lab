@@ -3,12 +3,18 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "eval:local": "node ./eval/run.mjs ./eval/profiles/omlx-qwen35-mini.json",
-    "eval:matrix": "node ./node_modules/promptfoo/dist/src/main.js eval -c ./eval/promptfooconfig.yaml --max-concurrency 1",
-    "eval:report": "node ./eval/report.mjs ./eval/runs",
-    "eval:hosted": "node ./eval/run.mjs ./eval/profiles/anthropic-haiku.json"
+    "build:web": "tsc -p tsconfig.web.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint:no-any": "node --import tsx ./scripts/no-explicit-any.ts",
+    "check": "npm run build:web && npm run typecheck && npm run lint:no-any",
+    "eval:local": "node --import tsx ./eval/run.ts ./eval/profiles/omlx-qwen35-mini.json",
+    "eval:matrix": "node --import tsx ./node_modules/promptfoo/dist/src/main.js eval -c ./eval/promptfooconfig.yaml --max-concurrency 1",
+    "eval:report": "node --import tsx ./eval/report.ts ./eval/runs",
+    "eval:hosted": "node --import tsx ./eval/run.ts ./eval/profiles/anthropic-haiku.json"
   },
   "devDependencies": {
-    "promptfoo": "0.119.11"
+    "promptfoo": "0.119.11",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3"
   }
 }

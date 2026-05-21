@@ -1,11 +1,72 @@
 const LABCTL = "./bin/labctl";
 const ROLES = new Set(["wolf", "villager", "seer", "doctor"]);
-const DEFAULT_MODELS = {
+type JsonRecord = Record<string, unknown>;
+export type Role = "wolf" | "villager" | "seer" | "doctor";
+export type Provider = "stub" | "omlx" | "openai-compatible" | "openai" | "anthropic";
+export type Player = { id: string; role: Role };
+export type LabInput = {
+  provider?: unknown;
+  round?: unknown;
+  postGame?: unknown;
+  configPath?: unknown;
+  model?: unknown;
+  baseUrl?: unknown;
+  apiKey?: unknown;
+  timeoutSeconds?: unknown;
+  thinkingBudget?: unknown;
+  temperature?: unknown;
+  maxTokens?: unknown;
+  players?: unknown;
+  maxRounds?: unknown;
+  wolfRotationCap?: unknown;
+  action?: unknown;
+};
+export type LabEnv = NodeJS.ProcessEnv & {
+  FORCE_COLOR: string;
+  NO_COLOR: string;
+  ROUND: string;
+  LLM_PROVIDER: string;
+  POST_GAME: string;
+  CONFIG_PATH?: string;
+  LLM_MODEL?: string;
+  LLM_BASE_URL?: string;
+  LLM_API_KEY?: string;
+  LLM_TIMEOUT_SECONDS?: string;
+  LLM_THINKING_BUDGET?: string;
+  LLM_TEMPERATURE?: string;
+  LLM_MAX_TOKENS?: string;
+};
+type ActionPlan = {
+  label: string;
+  requiresModel?: boolean;
+  steps?: Array<[string, string[]]>;
+  special?: "autoGame";
+};
+type Row = JsonRecord & {
+  agent_id?: string;
+  speaker?: string;
+  target?: string | null;
+  action?: string;
+  decided_at?: string;
+  public_text?: string;
+  text?: string;
+  round?: number | string;
+};
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asString(value: unknown, fallback = ""): string {
+  return value === undefined || value === null ? fallback : String(value);
+}
+
+const DEFAULT_MODELS: Partial<Record<Provider, string>> = {
   stub: "stub-werewolf-v1",
   openai: "gpt-4o-mini",
   anthropic: "claude-haiku-4-5-20251001",
 };
-const DEFAULT_PLAYERS = [
+const DEFAULT_PLAYERS: Player[] = [
   { id: "agent-a", role: "wolf" },
   { id: "agent-b", role: "villager" },
   { id: "agent-c", role: "seer" },
@@ -76,12 +137,13 @@ export const ACTIONS = {
       [LABCTL, ["query", "denied_private_table"]],
     ],
   },
-};
+} satisfies Record<string, ActionPlan>;
 
-const PROVIDERS = new Set(["stub", "omlx", "openai-compatible", "openai", "anthropic"]);
+const PROVIDERS = new Set<Provider>(["stub", "omlx", "openai-compatible", "openai", "anthropic"]);
 
-export function getActionPlan(action) {
-  const plan = ACTIONS[action];
+export function getActionPlan(action: unknown): ActionPlan {
+  const key = asString(action) as keyof typeof ACTIONS;
+  const plan = ACTIONS[key];
   if (!plan) {
     throw new Error(`unknown action: ${action}`);
   }
@@ -95,8 +157,8 @@ export function listActions() {
   }));
 }
 
-export function buildLabEnv(input = {}, baseEnv = process.env, options = {}) {
-  const provider = String(input.provider || "stub").trim();
+export function buildLabEnv(input: LabInput = {}, baseEnv: NodeJS.ProcessEnv = process.env, options: { requireModel?: boolean } = {}): LabEnv {
+  const provider = asString(input.provider || "stub").trim() as Provider;
   if (!PROVIDERS.has(provider)) {
     throw new Error(`unsupported provider: ${provider}`);
   }
@@ -106,7 +168,7 @@ export function buildLabEnv(input = {}, baseEnv = process.env, options = {}) {
     throw new Error("round must be a positive integer");
   }
 
-  const env = {
+  const env: LabEnv = {
     ...baseEnv,
     FORCE_COLOR: "0",
     NO_COLOR: "1",
@@ -161,8 +223,8 @@ export function buildLabEnv(input = {}, baseEnv = process.env, options = {}) {
   return env;
 }
 
-export function buildGameConfig(input = {}) {
-  const provider = String(input.provider || "stub").trim();
+export function buildGameConfig(input: LabInput = {}) {
+  const provider = asString(input.provider || "stub").trim() as Provider;
   if (!PROVIDERS.has(provider)) {
     throw new Error(`unsupported provider: ${provider}`);
   }
@@ -182,7 +244,7 @@ export function buildGameConfig(input = {}) {
   };
 }
 
-export function toHostModelUrl(baseUrl) {
+export function toHostModelUrl(baseUrl: unknown): string {
   const normalized = String(baseUrl || "http://localhost:8000/v1")
     .trim()
     .replace("host.docker.internal", "localhost")
@@ -190,36 +252,37 @@ export function toHostModelUrl(baseUrl) {
   return `${normalized}/models`;
 }
 
-export function toContainerModelUrl(baseUrl) {
+export function toContainerModelUrl(baseUrl: unknown): string {
   return String(baseUrl || defaultBaseUrlForProvider("omlx"))
     .trim()
     .replace(/^http:\/\/(?:localhost|127\.0\.0\.1):/u, "http://host.docker.internal:")
     .replace(/\/+$/, "");
 }
 
-function truthy(value) {
+function truthy(value: unknown): boolean {
   return value === true || value === "true" || value === "on" || value === "1";
 }
 
-function defaultModelForProvider(provider) {
+function defaultModelForProvider(provider: Provider): string {
   return DEFAULT_MODELS[provider] || "";
 }
 
-function defaultBaseUrlForProvider(provider) {
+function defaultBaseUrlForProvider(provider: Provider): string {
   if (provider === "omlx") return "http://host.docker.internal:8000/v1";
   if (provider === "anthropic") return "https://api.anthropic.com";
   return "https://api.openai.com/v1";
 }
 
-function normalizePlayers(value) {
+function normalizePlayers(value: unknown): Player[] {
   const players = Array.isArray(value) && value.length > 0 ? value : DEFAULT_PLAYERS;
   if (players.length < 3 || players.length > 12) {
     throw new Error("player count must be between 3 and 12");
   }
 
   const normalized = players.map((player, index) => {
-    const id = String(player.id || agentId(index)).trim();
-    const role = String(player.role || "villager").trim();
+    const raw = isRecord(player) ? player : {};
+    const id = String(raw.id || agentId(index)).trim();
+    const role = String(raw.role || "villager").trim() as Role;
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id)) {
       throw new Error(`invalid player id: ${id}`);
     }
@@ -245,7 +308,17 @@ function normalizePlayers(value) {
   return normalized;
 }
 
-export function buildContextForAgent(id, opts) {
+export function buildContextForAgent(id: string, opts: {
+  round?: unknown;
+  phase?: unknown;
+  alive?: string[];
+  eliminated?: Array<{ id: string; role?: string; round?: number | null; cause?: string; phase?: string }>;
+  publicEvents?: unknown[];
+  publicLog?: Row[];
+  privateNotesByAgent?: Map<string, unknown[]> | null;
+  beliefsByAgent?: Map<string, { suspicions: unknown[]; knowledge: unknown[] }> | null;
+  privateNotes?: unknown[];
+} = {}) {
   const {
     round,
     phase,
@@ -301,8 +374,8 @@ export function buildContextForAgent(id, opts) {
   };
 }
 
-export function parseBeliefsMarkers(text) {
-  const results = [];
+export function parseBeliefsMarkers(text: string): Array<{ agent: string; round: number; phase: string; suspicions: JsonRecord[]; knowledge: JsonRecord[] }> {
+  const results: Array<{ agent: string; round: number; phase: string; suspicions: JsonRecord[]; knowledge: JsonRecord[] }> = [];
   if (!text) return results;
   for (const line of text.split(/\r?\n/)) {
     const idx = line.indexOf("__BELIEFS__ ");
@@ -310,14 +383,14 @@ export function parseBeliefsMarkers(text) {
     const jsonText = line.slice(idx + "__BELIEFS__ ".length).trim();
     if (!jsonText) continue;
     try {
-      const parsed = JSON.parse(jsonText);
-      if (parsed && typeof parsed === "object" && parsed.agent) {
+      const parsed: unknown = JSON.parse(jsonText);
+      if (isRecord(parsed) && parsed.agent) {
         results.push({
           agent: String(parsed.agent),
           round: Number(parsed.round) || 0,
           phase: String(parsed.phase || ""),
-          suspicions: Array.isArray(parsed.suspicions) ? parsed.suspicions : [],
-          knowledge: Array.isArray(parsed.knowledge) ? parsed.knowledge : [],
+          suspicions: Array.isArray(parsed.suspicions) ? parsed.suspicions.filter(isRecord) : [],
+          knowledge: Array.isArray(parsed.knowledge) ? parsed.knowledge.filter(isRecord) : [],
         });
       }
     } catch {
@@ -327,7 +400,10 @@ export function parseBeliefsMarkers(text) {
   return results;
 }
 
-export function applyBeliefsMarkers(beliefsByAgent, markers) {
+export function applyBeliefsMarkers(
+  beliefsByAgent: Map<string, { suspicions: JsonRecord[]; knowledge: JsonRecord[] }>,
+  markers: Array<{ agent: string; round: number; phase?: string; suspicions: JsonRecord[]; knowledge: JsonRecord[] }> = [],
+) {
   for (const marker of markers || []) {
     const existing = beliefsByAgent.get(marker.agent) || {
       suspicions: [],
@@ -356,8 +432,8 @@ export function applyBeliefsMarkers(beliefsByAgent, markers) {
   return beliefsByAgent;
 }
 
-export function parseTurnStatsMarkers(text) {
-  const results = [];
+export function parseTurnStatsMarkers(text: string) {
+  const results: Array<JsonRecord & { agent: string; phase: string; round: number; tokens: { prompt: number; completion: number; reasoning: number } }> = [];
   if (!text) return results;
   for (const line of text.split(/\r?\n/)) {
     const idx = line.indexOf("__TURN_STATS__ ");
@@ -365,9 +441,9 @@ export function parseTurnStatsMarkers(text) {
     const jsonText = line.slice(idx + "__TURN_STATS__ ".length).trim();
     if (!jsonText) continue;
     try {
-      const parsed = JSON.parse(jsonText);
-      if (!parsed || typeof parsed !== "object" || !parsed.agent) continue;
-      const tokens = parsed.tokens && typeof parsed.tokens === "object" ? parsed.tokens : {};
+      const parsed: unknown = JSON.parse(jsonText);
+      if (!isRecord(parsed) || !parsed.agent) continue;
+      const tokens = isRecord(parsed.tokens) ? parsed.tokens : {};
       results.push({
         agent: String(parsed.agent),
         role: String(parsed.role || ""),
@@ -406,8 +482,8 @@ export function parseTurnStatsMarkers(text) {
 // Parses __INTENT__ <json> lines from agent-act.sh stdout. Each marker
 // carries the normalized utterance the agent wrote AND the private
 // rationale, which the judge pass needs to grade deception.
-export function parseIntentMarkers(text) {
-  const results = [];
+export function parseIntentMarkers(text: string) {
+  const results: Array<{ agent: string; role: string; phase: string; round: number; action: string; target: string; public_text: string; rationale: string }> = [];
   if (!text) return results;
   for (const line of text.split(/\r?\n/)) {
     const idx = line.indexOf("__INTENT__ ");
@@ -415,8 +491,8 @@ export function parseIntentMarkers(text) {
     const jsonText = line.slice(idx + "__INTENT__ ".length).trim();
     if (!jsonText) continue;
     try {
-      const parsed = JSON.parse(jsonText);
-      if (!parsed || typeof parsed !== "object" || !parsed.agent) continue;
+      const parsed: unknown = JSON.parse(jsonText);
+      if (!isRecord(parsed) || !parsed.agent) continue;
       results.push({
         agent: String(parsed.agent),
         role: String(parsed.role || ""),
@@ -434,8 +510,8 @@ export function parseIntentMarkers(text) {
   return results;
 }
 
-export function serializeRefereeEvent(event, nowIso) {
-  if (!event || typeof event !== "object") {
+export function serializeRefereeEvent(event: unknown, nowIso?: string): string {
+  if (!isRecord(event)) {
     throw new Error("referee event must be an object");
   }
   if (!event.kind || typeof event.kind !== "string") {
@@ -446,7 +522,7 @@ export function serializeRefereeEvent(event, nowIso) {
   return `${JSON.stringify({ ts, kind, ...rest })}\n`;
 }
 
-export function newRefereeGameId(nowIso) {
+export function newRefereeGameId(nowIso?: string): string {
   const iso = typeof nowIso === "string" ? nowIso : new Date().toISOString();
   const stamp = iso.replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
   const suffix = Math.floor(Math.random() * 0x10000)
@@ -455,7 +531,7 @@ export function newRefereeGameId(nowIso) {
   return `game-${stamp}-${suffix}`;
 }
 
-function clampUnit(value) {
+function clampUnit(value: unknown): number {
   const num = Number(value);
   if (!Number.isFinite(num)) return 0.5;
   if (num < 0) return 0;
@@ -463,8 +539,8 @@ function clampUnit(value) {
   return num;
 }
 
-export function chooseTarget(rows) {
-  const counts = new Map();
+export function chooseTarget(rows: Row[]): { target: string; votes: number } | null {
+  const counts = new Map<string, number>();
   for (const row of rows) {
     if (!row || !row.target) continue;
     counts.set(row.target, (counts.get(row.target) || 0) + 1);
@@ -477,8 +553,8 @@ export function chooseTarget(rows) {
   return { target: ranked[0][0], votes: ranked[0][1] };
 }
 
-export function latestRowPerAgent(rows) {
-  const latest = new Map();
+export function latestRowPerAgent(rows: Row[]): Map<string, Row> {
+  const latest = new Map<string, Row>();
   for (const row of rows || []) {
     if (!row || !row.agent_id) continue;
     const existing = latest.get(row.agent_id);
@@ -499,9 +575,9 @@ export function latestRowPerAgent(rows) {
   return latest;
 }
 
-export function latestKillsPerWolf(rows, liveWolves) {
+export function latestKillsPerWolf(rows: Row[], liveWolves: string[]) {
   const latest = latestRowPerAgent(rows);
-  const tally = [];
+  const tally: Array<{ agent_id: string; target: string; action?: string }> = [];
   for (const wolfId of liveWolves || []) {
     const row = latest.get(wolfId);
     if (!row || !row.target) continue;
@@ -510,8 +586,16 @@ export function latestKillsPerWolf(rows, liveWolves) {
   return tally;
 }
 
-export function resolveLynch(rows) {
-  const counts = new Map();
+export type LynchOutcome =
+  | { outcome: "abstain"; target: null; votes: number }
+  | { outcome: "lynch"; target: string; votes: number };
+export type NightOutcome =
+  | { outcome: "no-kill"; target: null; votes: number }
+  | { outcome: "saved"; target: string; votes: number }
+  | { outcome: "kill"; target: string; votes: number };
+
+export function resolveLynch(rows: Row[]): LynchOutcome {
+  const counts = new Map<string, number>();
   for (const row of rows || []) {
     if (!row || !row.target) continue;
     counts.set(row.target, (counts.get(row.target) || 0) + 1);
@@ -520,7 +604,7 @@ export function resolveLynch(rows) {
     return { outcome: "abstain", target: null, votes: 0 };
   }
   let topVotes = 0;
-  let topTargets = [];
+  let topTargets: string[] = [];
   for (const [target, votes] of counts) {
     if (votes > topVotes) {
       topVotes = votes;
@@ -532,10 +616,12 @@ export function resolveLynch(rows) {
   if (topTargets.length !== 1) {
     return { outcome: "abstain", target: null, votes: topVotes };
   }
-  return { outcome: "lynch", target: topTargets[0], votes: topVotes };
+  const target = topTargets[0];
+  if (!target) return { outcome: "abstain", target: null, votes: topVotes };
+  return { outcome: "lynch", target, votes: topVotes };
 }
 
-export function resolveNightOutcome(wolfRows, doctorRows) {
+export function resolveNightOutcome(wolfRows: Row[], doctorRows: Row[]): NightOutcome {
   const wolfTarget = chooseTarget(wolfRows);
   if (!wolfTarget) {
     return { outcome: "no-kill", target: null, votes: 0 };
@@ -547,7 +633,7 @@ export function resolveNightOutcome(wolfRows, doctorRows) {
   return { outcome: "kill", target: wolfTarget.target, votes: wolfTarget.votes };
 }
 
-function agentId(index) {
+function agentId(index: number): string {
   const alphabet = "abcdefghijklmnopqrstuvwxyz";
   if (index < alphabet.length) return `agent-${alphabet[index]}`;
   return `agent-${index + 1}`;

@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import {
   buildRunRequestBody,
@@ -11,7 +13,16 @@ import {
   hashProfile,
   runProfile,
   validateProfile,
-} from "../eval/run.mjs";
+} from "../eval/run.ts";
+
+async function listenOnRandomPort(server: Server): Promise<number> {
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  return (address as AddressInfo).port;
+}
 
 // === validateProfile ===
 assert.throws(() => validateProfile(null), /must be an object/);
@@ -186,8 +197,7 @@ try {
     res.write(`${JSON.stringify({ type: "done", ok: true })}\n`);
     res.end();
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
+  const port = await listenOnRandomPort(server);
 
   const profile = {
     name: "mock-smoke",
@@ -215,9 +225,10 @@ try {
   }
   // scorecard exists and is sane
   assert.ok(result.scorecard);
-  assert.equal(result.scorecard.meta.game_count, 3);
-  assert.equal(result.scorecard.meta.completed_game_count, 3);
-  assert.equal(result.scorecard.game_shape.village_winrate, 1);
+  const scorecard = result.scorecard;
+  assert.equal(scorecard.meta.game_count, 3);
+  assert.equal(scorecard.meta.completed_game_count, 3);
+  assert.equal(scorecard.game_shape.village_winrate, 1);
 
   // scorecard.json was written
   const written = JSON.parse(await readFile(join(outDir, "scorecard.json"), "utf8"));
@@ -244,8 +255,7 @@ try {
     res.writeHead(500);
     res.end("boom");
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
+  const port = await listenOnRandomPort(server);
 
   const profile = {
     name: "fail",
@@ -266,7 +276,7 @@ try {
   assert.equal(result.results.length, 2);
   for (const r of result.results) {
     assert.equal(r.ok, false);
-    assert.match(r.error, /HTTP 500/);
+    assert.match(r.error ?? "", /HTTP 500/);
   }
   assert.equal(result.scorecard, null, "no scorecard when no games complete");
 } finally {
@@ -313,8 +323,7 @@ try {
       res.write(`${JSON.stringify({ type: "done", ok: true })}\n`);
       res.end();
     });
-    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const port = server.address().port;
+    const port = await listenOnRandomPort(server);
 
     const profile = {
       name: "gate-fail",
@@ -330,10 +339,11 @@ try {
     const result = await runProfile(profile, { server: `http://127.0.0.1:${port}`, outDir: join(tmpGate, "out") });
     server.close();
     assert.ok(result.gateReport);
-    assert.equal(result.gateReport.pass, false);
+    const gateReport = result.gateReport;
+    assert.equal(gateReport.pass, false);
     assert.ok(
-      result.gateReport.hard_failures.some((h) => h.label === "http_error_rate_max"),
-      `expected http_error_rate_max in hard_failures, got: ${JSON.stringify(result.gateReport.hard_failures)}`,
+      gateReport.hard_failures.some((h) => h.label === "http_error_rate_max"),
+      `expected http_error_rate_max in hard_failures, got: ${JSON.stringify(gateReport.hard_failures)}`,
     );
 
     // profile-level skip overrides
@@ -350,10 +360,10 @@ try {
       res.write(`${JSON.stringify({ type: "done", ok: true })}\n`);
       res.end();
     });
-    await new Promise((resolve) => server2.listen(0, "127.0.0.1", resolve));
-    const port2 = server2.address().port;
+    const port2 = await listenOnRandomPort(server2);
     const skipResult = await runProfile(skipProfile, { server: `http://127.0.0.1:${port2}`, outDir: join(tmpGate, "out2") });
     server2.close();
+    assert.ok(skipResult.gateReport);
     assert.equal(skipResult.gateReport.skipped, true);
     assert.equal(skipResult.gateReport.pass, true);
   } finally {

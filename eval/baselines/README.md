@@ -1,7 +1,7 @@
 # Committed baselines
 
 This directory holds reference scorecards that we expect the eval framework
-to reproduce. `tests/eval-aggregate.mjs` asserts that `fixtures.json` matches
+to reproduce. `tests/eval-aggregate.ts` asserts that `fixtures.json` matches
 the live aggregator output for `eval/fixtures/`, so any change to the
 aggregator that shifts a metric will fail CI loudly.
 
@@ -17,7 +17,7 @@ aggregator that shifts a metric will fail CI loudly.
 ## Regenerating `fixtures.json`
 
 ```bash
-node -e "import('./eval/aggregate.mjs').then(async m => {
+node -e "import('./eval/aggregate.ts').then(async m => {
   const g = await m.loadGameLogs('eval/fixtures');
   const s = m.aggregate(g);
   delete s.meta.generated_at;

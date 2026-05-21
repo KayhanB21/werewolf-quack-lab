@@ -1,4 +1,30 @@
-export function classifyCommand(command) {
+type Row = Record<string, unknown>;
+type SummaryRow = Record<string, string>;
+type Metric = { label: string; value: string };
+export type StepSummary = {
+  kind: string;
+  title: string;
+  subject: string;
+  command: string;
+  exitCode: number;
+  status: string;
+  metrics: Metric[];
+  rows: SummaryRow[];
+  assertions: string[];
+  note: string;
+};
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+function objectRows(value: unknown): Row[] {
+  return Array.isArray(value)
+    ? value.filter((row): row is Row => typeof row === "object" && row !== null && !Array.isArray(row))
+    : [];
+}
+
+export function classifyCommand(command: string) {
   const wolfRotation = command.match(/^referee round ([0-9]+) wolf rotation ([0-9]+)$/);
   if (wolfRotation) {
     const [, round, rotation] = wolfRotation;
@@ -21,7 +47,8 @@ export function classifyCommand(command) {
 
   const roundPhase = command.match(/^referee round ([0-9]+) (discussion|voting|wolf|doctor|seer)$/);
   if (roundPhase) {
-    const [, round, phase] = roundPhase;
+    const [, round, phaseRaw] = roundPhase;
+    const phase = phaseRaw as "discussion" | "voting" | "wolf" | "doctor" | "seer";
     const titles = {
       discussion: `Round ${round} Discussion`,
       voting: `Round ${round} Voting`,
@@ -91,8 +118,8 @@ export function classifyCommand(command) {
   return { kind: "raw", title: command.replace(/^\.\//, ""), subject: "Command" };
 }
 
-export function extractJsonArrays(text) {
-  const arrays = [];
+export function extractJsonArrays(text: string): unknown[] {
+  const arrays: unknown[] = [];
   for (let i = 0; i < text.length; i += 1) {
     if (text[i] !== "[") continue;
 
@@ -126,7 +153,7 @@ export function extractJsonArrays(text) {
         if (depth === 0) {
           const candidate = text.slice(i, j + 1);
           try {
-            arrays.push(JSON.parse(candidate));
+            arrays.push(JSON.parse(candidate) as unknown);
             i = j;
           } catch {
             // Ignore bracketed non-JSON output, such as [gateway].
@@ -139,16 +166,16 @@ export function extractJsonArrays(text) {
   return arrays;
 }
 
-export function summarizeStep(command, raw, exitCode = 0) {
+export function summarizeStep(command: string, raw: string, exitCode = 0): StepSummary {
   const meta = classifyCommand(command);
   const summary = {
     ...meta,
     command,
     exitCode,
     status: exitCode === 0 ? "done" : "error",
-    metrics: [],
-    rows: [],
-    assertions: [],
+    metrics: [] as Metric[],
+    rows: [] as SummaryRow[],
+    assertions: [] as string[],
     note: "",
   };
 
@@ -163,7 +190,7 @@ export function summarizeStep(command, raw, exitCode = 0) {
 
   if (meta.kind === "actions") {
     summary.rows = [...raw.matchAll(/\[(agent-[^\]]+)\] wrote ([^ ]+) for phase=([a-z]+)/g)].map(
-      ([, agent, action, phase]) => ({ agent, action, phase }),
+      ([, agent, action, phase]) => ({ agent: agent || "", action: action || "", phase: phase || "" }),
     );
     summary.metrics.push({ label: "actions", value: String(summary.rows.length) });
     return summary;
@@ -171,11 +198,11 @@ export function summarizeStep(command, raw, exitCode = 0) {
 
   if (meta.kind === "publicLog") {
     summary.rows = pickArray(raw, (row) => row.public_text).map((row) => ({
-      round: String(row.round || ""),
-      agent: row.agent_id,
-      action: row.action,
-      target: row.target || "",
-      text: row.public_text,
+      round: stringValue(row.round),
+      agent: stringValue(row.agent_id),
+      action: stringValue(row.action),
+      target: stringValue(row.target),
+      text: stringValue(row.public_text),
     }));
     summary.metrics.push({ label: "public rows", value: String(summary.rows.length) });
     return summary;
@@ -186,10 +213,10 @@ export function summarizeStep(command, raw, exitCode = 0) {
       raw,
       (row) => row.action === "wolf-kill" || row.action === "wolf-done" || row.rationale,
     ).map((row) => ({
-      round: String(row.round || ""),
-      agent: row.agent_id,
-      target: row.target || "",
-      rationale: row.rationale || "",
+      round: stringValue(row.round),
+      agent: stringValue(row.agent_id),
+      target: stringValue(row.target),
+      rationale: stringValue(row.rationale),
     }));
     summary.metrics.push({ label: "wolf rows", value: String(summary.rows.length) });
     return summary;
@@ -198,10 +225,10 @@ export function summarizeStep(command, raw, exitCode = 0) {
   if (meta.kind === "doctorChannel") {
     summary.rows = pickArray(raw, (row) => row.action === "doctor-save" || row.rationale).map(
       (row) => ({
-        round: String(row.round || ""),
-        agent: row.agent_id,
-        target: row.target || "",
-        rationale: row.rationale || "",
+        round: stringValue(row.round),
+        agent: stringValue(row.agent_id),
+        target: stringValue(row.target),
+        rationale: stringValue(row.rationale),
       }),
     );
     summary.metrics.push({ label: "doctor rows", value: String(summary.rows.length) });
@@ -211,10 +238,10 @@ export function summarizeStep(command, raw, exitCode = 0) {
   if (meta.kind === "seerChannel") {
     summary.rows = pickArray(raw, (row) => row.action === "seer-investigate" || row.rationale).map(
       (row) => ({
-        round: String(row.round || ""),
-        agent: row.agent_id,
-        target: row.target || "",
-        rationale: row.rationale || "",
+        round: stringValue(row.round),
+        agent: stringValue(row.agent_id),
+        target: stringValue(row.target),
+        rationale: stringValue(row.rationale),
       }),
     );
     summary.metrics.push({ label: "seer rows", value: String(summary.rows.length) });
@@ -223,12 +250,12 @@ export function summarizeStep(command, raw, exitCode = 0) {
 
   if (meta.kind === "fullLog") {
     summary.rows = pickArray(raw, (row) => row.rationale || row.public_text).map((row) => ({
-      round: String(row.round || ""),
-      agent: row.agent_id,
-      action: row.action,
-      target: row.target || "",
-      text: row.public_text || "",
-      rationale: row.rationale || "",
+      round: stringValue(row.round),
+      agent: stringValue(row.agent_id),
+      action: stringValue(row.action),
+      target: stringValue(row.target),
+      text: stringValue(row.public_text),
+      rationale: stringValue(row.rationale),
     }));
     summary.metrics.push({ label: "audit rows", value: String(summary.rows.length) });
     return summary;
@@ -236,9 +263,9 @@ export function summarizeStep(command, raw, exitCode = 0) {
 
   if (meta.kind === "whoami") {
     summary.rows = pickArray(raw, (row) => row.name).map((row) => ({
-      name: row.name,
-      host: row.hostname,
-      provider: row.provider,
+      name: stringValue(row.name),
+      host: stringValue(row.hostname),
+      provider: stringValue(row.provider),
     }));
     summary.metrics.push({ label: "nodes", value: String(summary.rows.length) });
     return summary;
@@ -250,16 +277,16 @@ export function summarizeStep(command, raw, exitCode = 0) {
       summary.note = "No referee result found.";
       return summary;
     }
-    summary.metrics.push({ label: "winner", value: result.winner });
+    summary.metrics.push({ label: "winner", value: stringValue(result.winner) });
     summary.metrics.push({ label: "rounds", value: String(result.rounds || 0) });
-    summary.metrics.push({ label: "alive", value: String(result.alive?.length || 0) });
-    summary.note = result.reason || "";
-    summary.rows = (result.history || []).map((row) => ({
-      round: String(row.round || ""),
-      phase: row.phase || "",
-      event: row.event || "",
-      target: row.target || "",
-      count: String(row.votes || row.turns || ""),
+    summary.metrics.push({ label: "alive", value: String(Array.isArray(result.alive) ? result.alive.length : 0) });
+    summary.note = stringValue(result.reason);
+    summary.rows = objectRows(result.history).map((row) => ({
+      round: stringValue(row.round),
+      phase: stringValue(row.phase),
+      event: stringValue(row.event),
+      target: stringValue(row.target),
+      count: stringValue(row.votes || row.turns),
     }));
     return summary;
   }
@@ -273,7 +300,7 @@ export function summarizeStep(command, raw, exitCode = 0) {
   }
 
   if (meta.kind === "smoke") {
-    summary.assertions = [...raw.matchAll(/^ok - (.+)$/gm)].map(([, label]) => label);
+    summary.assertions = [...raw.matchAll(/^ok - (.+)$/gm)].map(([, label]) => label || "");
     summary.metrics.push({ label: "checks", value: String(summary.assertions.length) });
     return summary;
   }
@@ -281,21 +308,22 @@ export function summarizeStep(command, raw, exitCode = 0) {
   return summary;
 }
 
-function nextNonWhitespace(text, start) {
+function nextNonWhitespace(text: string, start: number): string {
   for (let i = start; i < text.length; i += 1) {
     if (!/\s/.test(text[i])) return text[i];
   }
   return "";
 }
 
-function uniqueMatches(text, pattern) {
-  return [...new Set([...text.matchAll(pattern)].map((match) => match[1]))];
+function uniqueMatches(text: string, pattern: RegExp): string[] {
+  return [...new Set([...text.matchAll(pattern)].map((match) => match[1] || ""))];
 }
 
-function pickArray(raw, predicate) {
+function pickArray(raw: string, predicate: (row: Row) => unknown): Row[] {
   return (
     extractJsonArrays(raw)
-      .filter((value) => Array.isArray(value))
+      .filter(Array.isArray)
+      .map(objectRows)
       .find((rows) => rows.some((row) => row && typeof row === "object" && predicate(row))) || []
   );
 }

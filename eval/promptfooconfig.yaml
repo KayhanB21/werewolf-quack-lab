@@ -5,7 +5,7 @@ prompts:
   - "Run the werewolf eval profile {{profile}}"
 
 providers:
-  - id: file://providers/werewolf-run.mjs
+  - id: file://providers/werewolf-run.ts
     label: local-omlx-mini
     config:
       profile: eval/profiles/omlx-qwen35-mini.json

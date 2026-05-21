@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { DEFAULT_GATES, deriveBandsFromBaseline, evaluateGates, formatGateReport } from "../eval/gates.mjs";
+import { DEFAULT_GATES, deriveBandsFromBaseline, evaluateGates, formatGateReport, type ScorecardForGates } from "../eval/gates.ts";
 
-function scorecard(overrides = {}) {
+function scorecard(overrides: ScorecardForGates = {}): ScorecardForGates {
   return {
     prompt_following: {
       valid_json_rate: 1,
@@ -120,10 +120,13 @@ function scorecard(overrides = {}) {
   );
   assert.equal(r.pass, true);
   assert.equal(r.soft_warnings.length, 1);
-  assert.equal(r.soft_warnings[0].label, "village_winrate_band");
-  assert.equal(r.soft_warnings[0].actual, 0.9);
-  assert.equal(r.soft_warnings[0].expected, 0.5);
-  assert.equal(r.soft_warnings[0].tolerance, 0.2);
+  const warning = r.soft_warnings[0];
+  assert.ok(warning);
+  assert.equal(warning.label, "village_winrate_band");
+  assert.equal(warning.actual, 0.9);
+  assert.ok("expected" in warning);
+  assert.equal(warning.expected, 0.5);
+  assert.equal(warning.tolerance, 0.2);
 }
 
 // === village_winrate_band within tolerance does not warn ===
@@ -142,7 +145,7 @@ function scorecard(overrides = {}) {
     { avg_rounds_band: [4, 2] },
   );
   assert.equal(r.soft_warnings.length, 1);
-  assert.equal(r.soft_warnings[0].label, "avg_rounds_band");
+  assert.equal(r.soft_warnings[0]?.label, "avg_rounds_band");
 }
 
 // === DEFAULT_GATES export is frozen and complete ===
@@ -204,7 +207,7 @@ assert.deepEqual(deriveBandsFromBaseline(null), {});
   const drift = evaluateGates(scorecard({ game_shape: { village_winrate: 0.9 } }), undefined, { baseline });
   assert.equal(drift.pass, true, "soft band drift does NOT hard-fail");
   assert.equal(drift.soft_warnings.length, 1);
-  assert.equal(drift.soft_warnings[0].label, "village_winrate_band");
+  assert.equal(drift.soft_warnings[0]?.label, "village_winrate_band");
 }
 
 // === profile gates override baseline-derived bands ===

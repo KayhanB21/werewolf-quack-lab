@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def node_eval_runner(profile: str = "eval/profiles/omlx-qwen35-mini.json"):
     async def solve(state: TaskState, generate):
         out_dir = ROOT / "eval" / "runs" / "inspect-last"
-        cmd = ["node", "./eval/run.mjs", profile, "--out", str(out_dir)]
+        cmd = ["node", "--import", "tsx", "./eval/run.ts", profile, "--out", str(out_dir)]
         proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=False)
         state.metadata["stdout"] = proc.stdout[-4000:]
         state.metadata["stderr"] = proc.stderr[-4000:]

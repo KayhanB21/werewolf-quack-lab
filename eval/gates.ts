@@ -15,7 +15,52 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 
-export const DEFAULT_GATES = Object.freeze({
+type ScoreSection = Record<string, unknown>;
+export type ScorecardForGates = {
+  prompt_following?: ScoreSection;
+  game_shape?: ScoreSection;
+  belief_quality?: ScoreSection;
+};
+export type GateBand = [center: number, tolerance: number];
+export type GateConfig = {
+  valid_json_rate_min: number;
+  action_in_phase_rate_min: number;
+  target_override_rate_max: number;
+  http_error_rate_max: number;
+  incomplete_rate_max: number;
+  belief_emit_rate_min: number;
+  village_winrate_band: GateBand | null;
+  avg_rounds_band: GateBand | null;
+  skip: boolean;
+};
+type GateOverrides = Partial<GateConfig> | null | undefined;
+export type ThresholdFailure = { label: string; actual: unknown; threshold: number };
+export type BandFailure = { label: string; actual: number; expected: number; tolerance: number };
+export type GateReport = {
+  pass: boolean;
+  skipped: boolean;
+  hard_failures: ThresholdFailure[];
+  soft_warnings: Array<ThresholdFailure | BandFailure>;
+  gates: GateConfig;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function numberFromRecord(source: unknown, section: string, field: string): number | undefined {
+  if (!isRecord(source)) return undefined;
+  const nested = source[section];
+  if (!isRecord(nested)) return undefined;
+  const value = nested[field];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function asGateOverrides(value: unknown): GateOverrides {
+  return isRecord(value) ? value as GateOverrides : undefined;
+}
+
+export const DEFAULT_GATES: GateConfig = Object.freeze({
   valid_json_rate_min: 0.85,
   action_in_phase_rate_min: 0.95,
   target_override_rate_max: 0.20,
@@ -30,33 +75,37 @@ export const DEFAULT_GATES = Object.freeze({
 // Derive default soft bands from a committed baseline scorecard.
 // Tolerances mirror the eval-plan: ±0.20 for winrate, ±2 rounds, ±0.15 for
 // belief_emit. A profile.gates entry always wins over a derived band.
-export function deriveBandsFromBaseline(baseline) {
+export function deriveBandsFromBaseline(baseline: unknown): Partial<GateConfig> {
   if (!baseline || typeof baseline !== "object") return {};
-  const out = {};
-  const village = baseline.game_shape?.village_winrate;
+  const out: Partial<GateConfig> = {};
+  const village = numberFromRecord(baseline, "game_shape", "village_winrate");
   if (typeof village === "number") out.village_winrate_band = [village, 0.2];
-  const rounds = baseline.game_shape?.avg_rounds;
+  const rounds = numberFromRecord(baseline, "game_shape", "avg_rounds");
   if (typeof rounds === "number") out.avg_rounds_band = [rounds, 2];
-  const belief = baseline.belief_quality?.belief_emit_rate;
+  const belief = numberFromRecord(baseline, "belief_quality", "belief_emit_rate");
   if (typeof belief === "number") out.belief_emit_rate_min = Math.max(0, belief - 0.15);
   return out;
 }
 
-function gte(actual, floor) {
+function gte(actual: unknown, floor: number): boolean {
   return typeof actual === "number" && actual >= floor;
 }
-function lte(actual, ceiling) {
+function lte(actual: unknown, ceiling: number): boolean {
   return typeof actual === "number" && actual <= ceiling;
 }
 
-function bandFailure(label, actual, band) {
+function bandFailure(label: string, actual: unknown, band: GateBand | null): BandFailure | null {
   if (!band || typeof actual !== "number") return null;
   const [center, tolerance] = band;
   if (Math.abs(actual - center) <= tolerance) return null;
   return { label, actual, expected: center, tolerance };
 }
 
-export function evaluateGates(scorecard, profileGates, opts = {}) {
+export function evaluateGates(
+  scorecard: ScorecardForGates,
+  profileGates: GateOverrides = undefined,
+  opts: { baseline?: unknown } = {},
+): GateReport {
   const derived = opts.baseline ? deriveBandsFromBaseline(opts.baseline) : {};
   // precedence: profile > derived-from-baseline > defaults
   const gates = { ...DEFAULT_GATES, ...derived, ...(profileGates || {}) };
@@ -68,8 +117,8 @@ export function evaluateGates(scorecard, profileGates, opts = {}) {
   const gs = scorecard.game_shape || {};
   const bq = scorecard.belief_quality || {};
 
-  const hard_failures = [];
-  const soft_warnings = [];
+  const hard_failures: ThresholdFailure[] = [];
+  const soft_warnings: Array<ThresholdFailure | BandFailure> = [];
 
   if (!gte(pf.valid_json_rate, gates.valid_json_rate_min)) {
     hard_failures.push({
@@ -123,7 +172,7 @@ export function evaluateGates(scorecard, profileGates, opts = {}) {
   return { pass: hard_failures.length === 0, skipped: false, hard_failures, soft_warnings, gates };
 }
 
-export function formatGateReport(report) {
+export function formatGateReport(report: GateReport): string {
   if (report.skipped) return "gates: skipped (profile sets gates.skip = true)";
   const lines = [];
   lines.push(`gates: ${report.pass ? "PASS" : "FAIL"} (${report.hard_failures.length} hard, ${report.soft_warnings.length} soft)`);
@@ -140,7 +189,7 @@ export function formatGateReport(report) {
   return lines.join("\n");
 }
 
-function formatNum(n) {
+function formatNum(n: unknown): string {
   if (typeof n !== "number" || Number.isNaN(n)) return String(n);
   if (Number.isInteger(n)) return String(n);
   return n.toFixed(4);
@@ -151,7 +200,7 @@ if (isMain) {
   const args = process.argv.slice(2);
   if (args.length === 0) {
     console.error(
-      "usage: gates.mjs <scorecard.json> [--profile profile.json] [--baseline baseline.json] [--out report.json]",
+      "usage: gates.ts <scorecard.json> [--profile profile.json] [--baseline baseline.json] [--out report.json]",
     );
     process.exit(2);
   }
@@ -160,13 +209,18 @@ if (isMain) {
   const baselineIdx = args.indexOf("--baseline");
   const outIdx = args.indexOf("--out");
 
-  const scorecard = JSON.parse(await readFile(scorecardPath, "utf8"));
-  const profile = profileIdx >= 0 ? JSON.parse(await readFile(args[profileIdx + 1], "utf8")) : {};
-  const baseline = baselineIdx >= 0 ? JSON.parse(await readFile(args[baselineIdx + 1], "utf8")) : null;
-  const report = evaluateGates(scorecard, profile.gates, { baseline });
+  if (!scorecardPath) throw new Error("missing scorecard path");
+  const scorecard = JSON.parse(await readFile(scorecardPath, "utf8")) as ScorecardForGates;
+  const profilePath = profileIdx >= 0 ? args[profileIdx + 1] : undefined;
+  const baselinePath = baselineIdx >= 0 ? args[baselineIdx + 1] : undefined;
+  const outPath = outIdx >= 0 ? args[outIdx + 1] : undefined;
+  const profile = profilePath ? JSON.parse(await readFile(profilePath, "utf8")) : {};
+  const baseline = baselinePath ? JSON.parse(await readFile(baselinePath, "utf8")) : null;
+  const profileGates = isRecord(profile) ? asGateOverrides(profile.gates) : undefined;
+  const report = evaluateGates(scorecard, profileGates, { baseline });
 
-  if (outIdx >= 0) {
-    await writeFile(args[outIdx + 1], `${JSON.stringify(report, null, 2)}\n`);
+  if (outPath) {
+    await writeFile(outPath, `${JSON.stringify(report, null, 2)}\n`);
   }
   console.error(formatGateReport(report));
   process.exit(report.pass ? 0 : 1);

@@ -1,23 +1,24 @@
 #!/usr/bin/env node
 // Werewolf Quack Lab web server.
 //
-// HTTP shell around the orchestrator (lib/referee.mjs). The referee owns
+// HTTP shell around the orchestrator (lib/referee.ts). The referee owns
 // every orchestrator concern (game loop, durable log, child-process
 // supervision); this file is intentionally just routing, request shaping,
 // and the NDJSON HTTP sink.
 
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildGameConfig,
   buildLabEnv,
   getActionPlan,
+  type LabInput,
   listActions,
   toHostModelUrl,
-} from "../lib/lab-web-actions.mjs";
+} from "../lib/lab-web-actions.ts";
 import {
   httpSink,
   killActiveChildren,
@@ -26,10 +27,11 @@ import {
   runAutoGame,
   runBufferedStep,
   runStep,
-} from "../lib/referee.mjs";
+} from "../lib/referee.ts";
 
 const WEB_DIR = path.join(ROOT_DIR, "web");
 const GENERATED_DIR = path.join(ROOT_DIR, ".generated");
+const GENERATED_WEB_DIR = path.join(GENERATED_DIR, "web");
 const WEB_CONFIG_PATH = path.join(GENERATED_DIR, "web-game.json");
 const PORT = Number(process.env.LAB_WEB_PORT || process.env.PORT || 5174);
 const DEV_MODE = truthyEnv(process.env.LAB_WEB_DEV);
@@ -38,12 +40,24 @@ const MIME = new Map([
   [".html", "text/html; charset=utf-8"],
   [".css", "text/css; charset=utf-8"],
   [".js", "text/javascript; charset=utf-8"],
-  [".mjs", "text/javascript; charset=utf-8"],
+  [".ts", "text/javascript; charset=utf-8"],
   [".json", "application/json; charset=utf-8"],
   [".svg", "image/svg+xml"],
 ]);
 
-function sendJson(res, status, payload) {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function stringValue(value: unknown): string {
+  return value === undefined || value === null ? "" : String(value);
+}
+
+function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
@@ -51,21 +65,22 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-async function readJson(req) {
-  const chunks = [];
+async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
   for await (const chunk of req) {
-    chunks.push(chunk);
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
   }
   if (chunks.length === 0) return {};
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  return isRecord(parsed) ? parsed : {};
 }
 
-function truthyEnv(value) {
+function truthyEnv(value: unknown): boolean {
   return ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
 }
 
-async function handleRun(req, res) {
-  let body;
+async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body: LabInput;
   let plan;
   try {
     body = await readJson(req);
@@ -73,13 +88,13 @@ async function handleRun(req, res) {
     body.configPath = await writeRuntimeConfig(body);
     buildLabEnv(body, process.env, { requireModel: plan.requiresModel !== false });
   } catch (error) {
-    sendJson(res, 400, { error: error.message });
+    sendJson(res, 400, { error: errorMessage(error) });
     return;
   }
 
   const env = buildLabEnv(body, process.env, { requireModel: plan.requiresModel !== false });
   let closed = false;
-  const shouldAbort = { onAbort: null };
+  const shouldAbort: { onAbort: (() => void) | null } = { onAbort: null };
 
   res.on("close", () => {
     closed = true;
@@ -109,7 +124,7 @@ async function handleRun(req, res) {
     return;
   }
 
-  for (const [command, args] of plan.steps) {
+  for (const [command, args] of plan.steps || []) {
     if (closed) return;
     const code = await runStep(command, args, env, sink, shouldAbort);
     if (code !== 0) {
@@ -123,15 +138,15 @@ async function handleRun(req, res) {
   res.end();
 }
 
-async function handleExport(req, res) {
-  let body;
+async function handleExport(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body: LabInput;
   let gameConfig;
   try {
     body = await readJson(req);
     body.configPath = await writeRuntimeConfig(body);
     gameConfig = buildGameConfig(body);
   } catch (error) {
-    sendJson(res, 400, { error: error.message });
+    sendJson(res, 400, { error: errorMessage(error) });
     return;
   }
 
@@ -144,8 +159,8 @@ async function handleExport(req, res) {
     "doctor_channel",
     "full_log",
   ];
-  const results = {};
-  const errors = [];
+  const results: Record<string, unknown[]> = {};
+  const errors: Array<{ query: string; exitCode: number; output: string }> = [];
 
   for (const queryName of queryNames) {
     const result = await runBufferedStep("./bin/labctl", ["query", queryName], env);
@@ -181,25 +196,25 @@ async function handleExport(req, res) {
   sendJson(res, errors.length > 0 ? 207 : 200, payload);
 }
 
-async function writeRuntimeConfig(input) {
+async function writeRuntimeConfig(input: LabInput): Promise<string> {
   const gameConfig = buildGameConfig(input);
   await mkdir(GENERATED_DIR, { recursive: true });
   await writeFile(WEB_CONFIG_PATH, `${JSON.stringify(gameConfig, null, 2)}\n`);
   return path.relative(ROOT_DIR, WEB_CONFIG_PATH);
 }
 
-async function handleModels(req, res) {
+async function handleModels(req: IncomingMessage, res: ServerResponse): Promise<void> {
   let body;
   try {
     body = await readJson(req);
   } catch (error) {
-    sendJson(res, 400, { error: error.message });
+    sendJson(res, 400, { error: errorMessage(error) });
     return;
   }
 
   const url = toHostModelUrl(body.baseUrl);
-  const headers = {};
-  if (body.apiKey) headers.Authorization = `Bearer ${body.apiKey}`;
+  const headers: Record<string, string> = {};
+  if (body.apiKey) headers.Authorization = `Bearer ${stringValue(body.apiKey)}`;
 
   try {
     const response = await fetch(url, { headers });
@@ -211,24 +226,25 @@ async function handleModels(req, res) {
       });
       return;
     }
-    const data = JSON.parse(text);
+    const data: unknown = JSON.parse(text);
     sendJson(res, 200, {
       url,
-      models: Array.isArray(data.data)
-        ? data.data.map((model) => model.id).filter(Boolean)
+      models: isRecord(data) && Array.isArray(data.data)
+        ? data.data.map((model: unknown) => isRecord(model) ? stringValue(model.id) : "").filter(Boolean)
         : [],
     });
   } catch (error) {
-    sendJson(res, 502, { error: error.message, url });
+    sendJson(res, 502, { error: errorMessage(error), url });
   }
 }
 
-async function serveStatic(req, res) {
-  const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+async function serveStatic(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const requestUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   const relative = requestUrl.pathname === "/" ? "index.html" : requestUrl.pathname.slice(1);
-  const candidate = path.resolve(WEB_DIR, relative);
+  const rootDir = relative.endsWith(".js") ? GENERATED_WEB_DIR : WEB_DIR;
+  const candidate = path.resolve(rootDir, relative);
 
-  if (!candidate.startsWith(`${WEB_DIR}${path.sep}`) && candidate !== WEB_DIR) {
+  if (!candidate.startsWith(`${rootDir}${path.sep}`) && candidate !== rootDir) {
     sendJson(res, 403, { error: "forbidden" });
     return;
   }
@@ -257,7 +273,7 @@ async function serveStatic(req, res) {
   }
 }
 
-function injectDevClient(html) {
+function injectDevClient(html: string): string {
   if (!html.includes("</body>")) return html;
   const script = `
     <script>
@@ -282,7 +298,7 @@ function injectDevClient(html) {
   return html.replace("</body>", `${script}\n  </body>`);
 }
 
-function handleDevEvents(req, res) {
+function handleDevEvents(req: IncomingMessage, res: ServerResponse): void {
   if (!DEV_MODE) {
     sendJson(res, 404, { error: "dev reload disabled" });
     return;
@@ -332,7 +348,7 @@ const server = createServer(async (req, res) => {
     }
     sendJson(res, 405, { error: "method not allowed" });
   } catch (error) {
-    sendJson(res, 500, { error: error.message });
+    sendJson(res, 500, { error: errorMessage(error) });
   }
 });
 
@@ -342,7 +358,7 @@ server.on("error", (error) => {
   process.exit(1);
 });
 
-function shutdown(signal) {
+function shutdown(signal: NodeJS.Signals): void {
   console.log(`Received ${signal}; shutting down.`);
   killActiveChildren();
   server.close(() => {

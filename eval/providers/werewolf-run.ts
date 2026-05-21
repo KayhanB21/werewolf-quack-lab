@@ -1,42 +1,61 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { formatScorecardSummary } from "../aggregate.mjs";
-import { runProfile } from "../run.mjs";
+import { formatScorecardSummary } from "../aggregate.ts";
+import { runProfile } from "../run.ts";
 
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
+type ProviderOptions = {
+  id?: string;
+  config?: Record<string, unknown>;
+};
+type PromptfooContext = {
+  vars?: Record<string, unknown>;
+};
+
+function str(value: unknown): string {
+  return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 export default class WerewolfRunProvider {
-  constructor(options = {}) {
+  private providerId: string;
+  private config: Record<string, unknown>;
+
+  constructor(options: ProviderOptions = {}) {
     this.providerId = options.id || "werewolf-quack-lab";
     this.config = options.config || {};
   }
 
-  id() {
+  id(): string {
     return this.providerId;
   }
 
-  async callApi(prompt, context = {}) {
+  async callApi(_prompt: string, context: PromptfooContext = {}) {
     const vars = context.vars || {};
-    const profilePath = vars.profile || this.config.profile;
+    const profilePath = str(vars.profile || this.config.profile);
     if (!profilePath) {
       return { error: "werewolf provider requires config.profile or test vars.profile" };
     }
     const absProfile = path.isAbsolute(profilePath) ? profilePath : path.join(ROOT_DIR, profilePath);
-    const profile = JSON.parse(await readFile(absProfile, "utf8"));
+    const parsedProfile = JSON.parse(await readFile(absProfile, "utf8")) as unknown;
+    const profile = isRecord(parsedProfile) ? parsedProfile : {};
     const merged = {
       ...profile,
-      provider: vars.provider || this.config.provider || profile.provider,
-      model: vars.model || this.config.model || profile.model,
-      base_url: vars.base_url || this.config.base_url || profile.base_url,
+      provider: vars.provider || this.config.provider || str(profile.provider),
+      model: vars.model || this.config.model || str(profile.model),
+      base_url: vars.base_url || this.config.base_url || str(profile.base_url),
       game_count: Number(vars.game_count || this.config.game_count || profile.game_count),
       concurrency: Number(vars.concurrency || this.config.concurrency || profile.concurrency || 1),
     };
     let result;
     try {
       result = await runProfile(merged, {
-        server: vars.server || this.config.server || process.env.LAB_WEB_URL || "http://localhost:5174",
-        outDir: vars.out_dir || this.config.out_dir,
+        server: str(vars.server || this.config.server || process.env.LAB_WEB_URL || "http://localhost:5174"),
+        outDir: vars.out_dir || this.config.out_dir ? str(vars.out_dir || this.config.out_dir) : undefined,
       });
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) };

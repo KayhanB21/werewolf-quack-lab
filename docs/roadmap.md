@@ -77,8 +77,8 @@ Status: complete.
 
 Remaining work:
 
-- Promote the referee out of `bin/lab-web-server.mjs` into a standalone
-  `bin/referee.mjs` so the HTTP server is just a thin shell.
+- Promote the referee out of `bin/lab-web-server.ts` into a standalone
+  `bin/referee.ts` so the HTTP server is just a thin shell.
 - Expose max rounds and wolf rotation cap in the UI (wired via API today).
 - Add tie-breaking policy controls.
 - Add memory compaction for longer games.
@@ -94,11 +94,11 @@ Status: complete (P3 in `docs/implementation-status.md`).
 - omlx `thinking_budget` is first-class: setting it non-zero unlocks the
   `reasoning_content` split for Qwen3 family models that otherwise loop on
   unbounded CoT.
-- `lib/lab-web-actions.mjs#parseTurnStatsMarkers` parses the marker; the
+- `lib/lab-web-actions.ts#parseTurnStatsMarkers` parses the marker; the
   orchestrator appends `turn-stats` events to the durable log.
-- `eval/aggregate.mjs` computes a scorecard with `prompt_following`,
+- `eval/aggregate.ts` computes a scorecard with `prompt_following`,
   `game_shape`, `belief_quality`, and `performance` sections.
-- `eval/run.mjs` drives N games via `/api/run`, collects each durable log,
+- `eval/run.ts` drives N games via `/api/run`, collects each durable log,
   aggregates, and writes `scorecard.json`.
 - Profiles in `eval/profiles/`: `stub-smoke.json` (3-game pipeline sanity),
   `omlx-qwen35.json` (10 games against local omlx with `thinking_budget=400`).

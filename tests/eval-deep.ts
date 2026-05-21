@@ -18,6 +18,8 @@
 
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -27,17 +29,19 @@ import {
   loadGameLogs,
   parseGameLog,
   summarizeGame,
-} from "../eval/aggregate.mjs";
-import { evaluateGates } from "../eval/gates.mjs";
-import { runProfile } from "../eval/run.mjs";
+} from "../eval/aggregate.ts";
+import type { GameEvent } from "../eval/aggregate.ts";
+import { evaluateGates, type ScorecardForGates } from "../eval/gates.ts";
+import { runProfile } from "../eval/run.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURES_DIR = join(ROOT, "eval", "fixtures");
 
-function isFiniteNumber(x) {
+function isFiniteNumber(x: unknown): boolean {
   return typeof x === "number" && Number.isFinite(x);
 }
-function assertAllNumbersFinite(obj, pathPrefix = "") {
+function assertAllNumbersFinite(obj: unknown, pathPrefix = ""): void {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return;
   for (const [k, v] of Object.entries(obj)) {
     const p = pathPrefix ? `${pathPrefix}.${k}` : k;
     if (v && typeof v === "object" && !Array.isArray(v)) {
@@ -46,6 +50,15 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
       assert.ok(isFiniteNumber(v), `${p} is non-finite: ${v}`);
     }
   }
+}
+
+async function listenOnRandomPort(server: Server): Promise<number> {
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  return (address as AddressInfo).port;
 }
 
 // ===========================================================================
@@ -80,7 +93,7 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
   assert.equal(mutatedSc.game_shape.wolves_winrate, 1);
 
   // per_game[0].winner reflects mutation
-  assert.equal(mutatedSc.per_game[0].winner, "wolves");
+  assert.equal(mutatedSc.per_game[0]?.winner, "wolves");
 
   // prompt-following invariant under winner flip
   assert.deepEqual(mutatedSc.prompt_following, baselineSc.prompt_following);
@@ -105,7 +118,7 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
   const tmp = await mkdtemp(join(tmpdir(), "eval-deep-conc-"));
   try {
     // pre-write 12 distinct durable logs so each game can be distinguished
-    const logPaths = [];
+    const logPaths: string[] = [];
     for (let i = 0; i < 12; i += 1) {
       const p = join(tmp, `log-${i}.jsonl`);
       const events = [
@@ -118,13 +131,13 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
 
     // Track the order the server saw requests in.
     let requestSeq = 0;
-    const requestOrder = [];
+    const requestOrder: number[] = [];
 
     const server = createServer((req, res) => {
       let body = "";
-      req.on("data", (c) => (body += c));
+      req.on("data", (chunk: Buffer) => (body += chunk.toString("utf8")));
       req.on("end", () => {
-        const parsed = JSON.parse(body);
+        const parsed = JSON.parse(body) as unknown;
         // The body doesn't carry gameIndex (it's the same payload N times),
         // so we map by request-arrival order — the worker pool dispatches
         // queue items sequentially per worker, but across workers ordering
@@ -159,8 +172,7 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
         }, delayMs);
       });
     });
-    await new Promise((r) => server.listen(0, "127.0.0.1", r));
-    const port = server.address().port;
+    const port = await listenOnRandomPort(server);
 
     const profile = {
       name: "race",
@@ -182,13 +194,14 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
     // EVERY result slot is populated (no dropped or shifted indices)
     for (let i = 0; i < 12; i += 1) {
       assert.ok(result.results[i], `results[${i}] is undefined`);
-      assert.equal(result.results[i].gameIndex, i, `results[${i}].gameIndex must equal ${i}`);
-      assert.equal(result.results[i].ok, true);
+      assert.equal(result.results[i]?.gameIndex, i, `results[${i}].gameIndex must equal ${i}`);
+      assert.equal(result.results[i]?.ok, true);
     }
     // requests arrived in some order (at least one out-of-order pair across 12 with random delay)
     assert.equal(requestOrder.length, 12);
 
     // scorecard sees all 12 games
+    assert.ok(result.scorecard);
     assert.equal(result.scorecard.meta.game_count, 12);
     assert.equal(result.scorecard.meta.completed_game_count, 12);
 
@@ -205,7 +218,7 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
 // regardless of what upstream emits.
 // ===========================================================================
 {
-  const hostileEvents = [
+  const hostileEvents: GameEvent[] = [
     { kind: "game-start", game_id: "h", provider: "p", model: "m", players: [{ id: "a", role: "wolf" }] },
     {
       kind: "turn-stats",
@@ -261,7 +274,7 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
   assert.equal(sc.belief_quality.avg_knowledge_per_turn, 0);
   assert.equal(sc.belief_quality.belief_emit_rate, 0);
 
-  // global scan for any rogue NaN / Infinity
+  // global scan for non-finite values
   assertAllNumbersFinite(sc);
 
   console.log("ok  3. hostile numerics (NaN/Infinity/negative/strings) clamp to 0");
@@ -276,7 +289,7 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
 // not double-count rounds.
 // ===========================================================================
 {
-  const events = [
+  const events: GameEvent[] = [
     { kind: "game-start", game_id: "x", provider: "omlx", model: "qwen-old", players: [{ id: "a", role: "wolf" }, { id: "b", role: "villager" }] },
     { kind: "round-start", round: 1, alive: ["a", "b"] },
     { kind: "game-start", game_id: "x", provider: "openai", model: "gpt-4o-mini", players: [{ id: "a", role: "wolf" }, { id: "b", role: "villager" }] },
@@ -311,7 +324,7 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
 // this should already pass — locking it in.
 // ===========================================================================
 {
-  const events = [
+  const events: GameEvent[] = [
     { kind: "game-end", winner: "wolves", reason: "wolves outnumber", rounds: 3 },
     { kind: "round-start", round: 1, alive: ["a", "b"] },
     { kind: "wolf-kill", round: 1, target: "b", role: "villager" },
@@ -375,8 +388,7 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
       res.write(`${JSON.stringify({ type: "done", ok: true })}\n`);
       res.end();
     });
-    await new Promise((r) => server.listen(0, "127.0.0.1", r));
-    const port = server.address().port;
+    const port = await listenOnRandomPort(server);
 
     const result = await runProfile(
       {
@@ -396,16 +408,17 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
     server.close();
 
     // both server calls reported ok=true
-    assert.equal(result.results[0].ok, true);
-    assert.equal(result.results[1].ok, true);
+    assert.equal(result.results[0]?.ok, true);
+    assert.equal(result.results[1]?.ok, true);
     // but result[1] should carry copy_error
     assert.ok(
-      typeof result.results[1].copy_error === "string" && result.results[1].copy_error.length > 0,
+      typeof result.results[1]?.copy_error === "string" && result.results[1].copy_error.length > 0,
       `expected copy_error on result[1], got: ${JSON.stringify(result.results[1])}`,
     );
-    assert.equal(result.results[0].copy_error, undefined);
+    assert.equal(result.results[0]?.copy_error, undefined);
 
     // scorecard reflects only the 1 game that was actually loaded
+    assert.ok(result.scorecard);
     assert.equal(result.scorecard.meta.game_count, 1);
     assert.equal(result.scorecard.meta.completed_game_count, 1);
 
@@ -467,8 +480,7 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
       res.write(`${JSON.stringify({ type: "done", ok: true })}\n`);
       res.end();
     });
-    await new Promise((r) => server.listen(0, "127.0.0.1", r));
-    const port = server.address().port;
+    const port = await listenOnRandomPort(server);
 
     const result = await runProfile(
       {
@@ -487,8 +499,9 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
     );
     server.close();
 
-    assert.equal(result.results[0].ok, true, `garbage must not block extraction: ${JSON.stringify(result.results[0])}`);
-    assert.equal(result.results[0].durable, realLog);
+    assert.equal(result.results[0]?.ok, true, `garbage must not block extraction: ${JSON.stringify(result.results[0])}`);
+    assert.equal(result.results[0]?.durable, realLog);
+    assert.ok(result.scorecard);
     assert.equal(result.scorecard.meta.completed_game_count, 1);
     assert.equal(result.scorecard.game_shape.wolves_winrate, 1);
 
@@ -508,7 +521,7 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
 //   - skip:true in profile wins over everything
 // ===========================================================================
 {
-  function sc(overrides = {}) {
+  function sc(overrides: ScorecardForGates = {}): ScorecardForGates {
     return {
       prompt_following: {
         valid_json_rate: 1,
@@ -568,6 +581,7 @@ function assertAllNumbersFinite(obj, pathPrefix = "") {
     assert.ok(r.soft_warnings.some((w) => w.label === "belief_emit_rate_min"));
     // and the *threshold* in the warning equals the derived floor
     const warn = r.soft_warnings.find((w) => w.label === "belief_emit_rate_min");
+    assert.ok(warn && "threshold" in warn);
     assert.ok(Math.abs(warn.threshold - 0.65) < 1e-9);
   }
 

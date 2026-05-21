@@ -2,22 +2,22 @@
 // Regenerate or verify eval/baselines/fixtures.json from eval/fixtures/.
 //
 // Usage:
-//   node eval/baseline-refresh.mjs           # rewrite the baseline file
-//   node eval/baseline-refresh.mjs --check   # exit non-zero if it would change
+//   tsx eval/baseline-refresh.ts           # rewrite the baseline file
+//   tsx eval/baseline-refresh.ts --check   # exit non-zero if it would change
 
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { aggregate, loadGameLogs } from "./aggregate.mjs";
+import { aggregate, loadGameLogs } from "./aggregate.ts";
 
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const FIXTURES_DIR = path.join(ROOT_DIR, "eval", "fixtures");
 const BASELINE_PATH = path.join(ROOT_DIR, "eval", "baselines", "fixtures.json");
 
-function stripVolatile(sc) {
-  delete sc.meta.generated_at;
-  for (const g of sc.per_game) delete g.path;
-  return sc;
+function stripVolatile(sc: ReturnType<typeof aggregate>): unknown {
+  const { generated_at: _generatedAt, ...meta } = sc.meta;
+  const perGame = sc.per_game.map(({ path: _path, ...game }) => game);
+  return { ...sc, meta, per_game: perGame };
 }
 
 const games = await loadGameLogs(FIXTURES_DIR);
@@ -34,7 +34,7 @@ if (process.argv.includes("--check")) {
     process.exit(0);
   }
   console.error(`drift detected in ${path.relative(ROOT_DIR, BASELINE_PATH)}`);
-  console.error(`run: node eval/baseline-refresh.mjs   (or: make baseline-refresh)`);
+  console.error(`run: tsx eval/baseline-refresh.ts   (or: make baseline-refresh)`);
   process.exit(1);
 }
 

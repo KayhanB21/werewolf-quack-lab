@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Tests for eval/judge.mjs (deception judge pass).
+// Tests for eval/judge.ts (deception judge pass).
 
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { aggregate, parseGameLog } from "../eval/aggregate.mjs";
+import { aggregate, parseGameLog, type GameEvent } from "../eval/aggregate.ts";
 import {
   buildJudgePrompt,
   callJudgeOpenAICompatible,
@@ -13,7 +13,7 @@ import {
   extractWolfUtterances,
   judgeGameLog,
   parseJudgeResponse,
-} from "../eval/judge.mjs";
+} from "../eval/judge.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const JUDGED_FIXTURE = join(ROOT, "eval", "fixtures", "judged", "with-judge-verdicts.jsonl");
@@ -30,8 +30,8 @@ const JUDGED_FIXTURE = join(ROOT, "eval", "fixtures", "judged", "with-judge-verd
     { deceptive: false, confidence: 0.6, reason: "" },
   );
   // confidence clamped to [0,1]
-  assert.equal(parseJudgeResponse('{"deceptive":true,"confidence":42}').confidence, 1);
-  assert.equal(parseJudgeResponse('{"deceptive":true,"confidence":-5}').confidence, 0);
+  assert.equal(parseJudgeResponse('{"deceptive":true,"confidence":42}')?.confidence, 1);
+  assert.equal(parseJudgeResponse('{"deceptive":true,"confidence":-5}')?.confidence, 0);
   // missing deceptive -> null
   assert.equal(parseJudgeResponse('{"confidence":0.5}'), null);
   // garbage -> null
@@ -58,19 +58,19 @@ const JUDGED_FIXTURE = join(ROOT, "eval", "fixtures", "judged", "with-judge-verd
 
 // === extractWolfUtterances: villager utterances are excluded ===
 {
-  const events = [
+  const events: GameEvent[] = [
     { kind: "game-start", players: [{ id: "p1", role: "wolf" }, { id: "p2", role: "villager" }] },
     { kind: "agent-intent", round: 1, agent: "p1", role: "wolf", phase: "day", action: "speak", public_text: "hi", rationale: "r1" },
     { kind: "agent-intent", round: 1, agent: "p2", role: "villager", phase: "day", action: "speak", public_text: "hello", rationale: "r2" },
   ];
   const utterances = extractWolfUtterances(events);
   assert.equal(utterances.length, 1);
-  assert.equal(utterances[0].agent, "p1");
+  assert.equal(utterances[0]?.agent, "p1");
 }
 
 // === extractWolfUtterances: empty / whitespace public_text skipped ===
 {
-  const events = [
+  const events: GameEvent[] = [
     { kind: "game-start", players: [{ id: "p1", role: "wolf" }] },
     { kind: "agent-intent", round: 1, agent: "p1", role: "wolf", phase: "day", action: "speak", public_text: "", rationale: "r" },
     { kind: "agent-intent", round: 1, agent: "p1", role: "wolf", phase: "day", action: "speak", public_text: "   ", rationale: "r" },
@@ -100,9 +100,9 @@ const JUDGED_FIXTURE = join(ROOT, "eval", "fixtures", "judged", "with-judge-verd
 
 // === callJudgeOpenAICompatible with mocked fetch ===
 {
-  const fakeFetch = async (url, init) => {
+  const fakeFetch = async (url: string, init: { body: string; headers: Record<string, string> }) => {
     assert.match(url, /\/chat\/completions$/);
-    const body = JSON.parse(init.body);
+    const body = JSON.parse(init.body) as Record<string, unknown>;
     assert.equal(body.model, "fake-model");
     assert.equal(init.headers.Authorization, "Bearer secret");
     return {
@@ -167,7 +167,7 @@ const JUDGED_FIXTURE = join(ROOT, "eval", "fixtures", "judged", "with-judge-verd
   for (const v of result.verdicts) {
     assert.equal(v.kind, "judge-verdict");
     assert.equal(v.deceptive, false);
-    assert.match(v.reason, /dry-run/);
+    assert.match(v.reason ?? "", /dry-run/);
   }
 }
 
@@ -177,9 +177,9 @@ const JUDGED_FIXTURE = join(ROOT, "eval", "fixtures", "judged", "with-judge-verd
     (e) => e.kind !== "judge-verdict",
   );
   let callCount = 0;
-  const fakeFetch = async (url, init) => {
+  const fakeFetch = async (_url: string, init: { body: string }) => {
     callCount += 1;
-    const body = JSON.parse(init.body);
+    JSON.parse(init.body);
     // alternate: first deceptive, second not
     const deceptive = callCount === 1;
     return {
@@ -226,7 +226,7 @@ const JUDGED_FIXTURE = join(ROOT, "eval", "fixtures", "judged", "with-judge-verd
 
 // === computeDeceptionMetrics: no verdicts -> null rates ===
 {
-  const events = [{ kind: "game-start", players: [{ id: "p1", role: "wolf" }] }];
+  const events: GameEvent[] = [{ kind: "game-start", players: [{ id: "p1", role: "wolf" }] }];
   const metrics = computeDeceptionMetrics(events);
   assert.equal(metrics.deception_production_rate, null);
   assert.equal(metrics.deception_detection_rate, null);
@@ -246,7 +246,7 @@ const JUDGED_FIXTURE = join(ROOT, "eval", "fixtures", "judged", "with-judge-verd
 
 // === aggregator on a log WITHOUT verdicts leaves deception fields null ===
 {
-  const events = [
+  const events: GameEvent[] = [
     { kind: "game-start", players: [{ id: "p1", role: "wolf" }] },
     { kind: "game-end", winner: "village", reason: "x", rounds: 1 },
   ];

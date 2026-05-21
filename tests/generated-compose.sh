@@ -92,6 +92,21 @@ if ! grep -Fq 'LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8000/v1
   exit 1
 fi
 
+if ! grep -Fq 'LLM_THINKING_BUDGET: ${LLM_THINKING_BUDGET:-}' <<<"${compose_yaml}"; then
+  echo "generated compose should thread LLM_THINKING_BUDGET into player containers" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.2}' <<<"${compose_yaml}"; then
+  echo "generated compose should thread LLM_TEMPERATURE into player containers" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-260}' <<<"${compose_yaml}"; then
+  echo "generated compose should thread LLM_MAX_TOKENS into player containers" >&2
+  exit 1
+fi
+
 if ! grep -Eq "^networks:" <<<"${compose_yaml}"; then
   echo "generated compose should declare a top-level networks: block" >&2
   exit 1

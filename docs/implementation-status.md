@@ -44,9 +44,9 @@ under 10 seconds per turn when `thinking_budget` is non-zero.
 ```
 bin/        # user-callable entry points
   labctl                  # Docker / lab control
-  lab-web-server.mjs      # HTTP shell (routing + sinks; orchestrator lives in lib/)
-  lab-web-dev.mjs         # dev mode: server with watch-and-reload
-  referee.mjs             # standalone CLI that runs one auto-game without HTTP
+  lab-web-server.ts      # HTTP shell (routing + sinks; orchestrator lives in lib/)
+  lab-web-dev.ts         # dev mode: server with watch-and-reload
+  referee.ts             # standalone CLI that runs one auto-game without HTTP
   smoke-test.sh           # runs every test then `labctl smoke`
   omlx-smoke-test.sh      # opt-in smoke against a host omlx server
 
@@ -57,23 +57,23 @@ container/  # scripts that run INSIDE Docker player / gateway containers
   gateway-smoke-test.sh   # in-container federation assertions
 
 lib/        # importable / sourceable modules
-  lab-web-actions.mjs     # pure helpers: env, context, markers, game logic
-  referee.mjs             # orchestrator: runAutoGame + child supervision + sinks
+  lab-web-actions.ts     # pure helpers: env, context, markers, game logic
+  referee.ts             # orchestrator: runAutoGame + child supervision + sinks
   lab-span.sh             # emit_span / span_now_ms (federation timeline)
   mint-token.sh           # HMAC-SHA256 lab_check_token minter
   generate-compose.sh     # per-player compose generator
 
 eval/       # eval framework
-  aggregate.mjs           # pure aggregator + CLI
-  gates.mjs               # hard/soft regression gates + CLI
-  judge.mjs               # LLM-as-judge deception pass (CLI + module)
-  report.mjs              # compare run dirs; Markdown/JSON report + bootstrap CIs
-  run.mjs                 # batch runner against /api/run, with concurrency
+  aggregate.ts           # pure aggregator + CLI
+  gates.ts               # hard/soft regression gates + CLI
+  judge.ts               # LLM-as-judge deception pass (CLI + module)
+  report.ts              # compare run dirs; Markdown/JSON report + bootstrap CIs
+  run.ts                 # batch runner against /api/run, with concurrency
   promptfooconfig.yaml    # promptfoo matrix using the Node runner provider
   providers/
-    werewolf-run.mjs      # promptfoo custom JS provider
+    werewolf-run.ts      # promptfoo custom JS provider
   inspect/
-    werewolf_task.py      # Inspect AI wrapper around node eval/run.mjs
+    werewolf_task.py      # Inspect AI wrapper around tsx eval/run.ts
   profiles/
     stub-smoke.json       # 3-game scripted pipeline sanity (strict gates)
     omlx-qwen35-mini.json # 5 games / 3 players — daily smoke
@@ -83,7 +83,7 @@ eval/       # eval framework
     omlx-qwen35-hot.json  # temperature=0.7 variance probe
     omlx-large.json       # 50-game variance-analysis baseline
     anthropic-haiku.json  # hosted Claude Haiku 4.5 (prompt cached system)
-  baseline-refresh.mjs    # regenerate / verify eval/baselines/fixtures.json
+  baseline-refresh.ts    # regenerate / verify eval/baselines/fixtures.json
   baselines/
     fixtures.json         # deterministic aggregate of eval/fixtures/
     README.md             # how to regenerate baselines
@@ -101,14 +101,14 @@ tests/      # all test suites
   lab-authz.sh
   lab-span.sh
   generated-compose.sh
-  lab-web.mjs
-  referee.mjs             # sink abstraction + helpers + child supervision
-  eval-aggregate.mjs
-  eval-gates.mjs
-  eval-judge.mjs          # judge prompt builder + verdict parser + metric calc
-  eval-run.mjs
-  eval-deep.mjs           # multi-step scenarios: lifecycle, races, hostile inputs
-  eval-report.mjs
+  lab-web.ts
+  referee.ts             # sink abstraction + helpers + child supervision
+  eval-aggregate.ts
+  eval-gates.ts
+  eval-judge.ts          # judge prompt builder + verdict parser + metric calc
+  eval-run.ts
+  eval-deep.ts           # multi-step scenarios: lifecycle, races, hostile inputs
+  eval-report.ts
 
 docs/       # roadmap, architecture, eval-plan, this status
   research-eval-plan.md   # research-grade eval workflow and benchmark mapping
@@ -137,15 +137,15 @@ explicitly.
   lab-secret distribution, no static tokens in `players.json`.
 - `tests/lab-span.sh` — span emission shape, hosts list, denied scope, ms
   precision.
-- `tests/lab-web.mjs` — pure functions: `buildContextForAgent`,
+- `tests/lab-web.ts` — pure functions: `buildContextForAgent`,
   `chooseTarget`, `latestRowPerAgent`, `latestKillsPerWolf`,
-  `resolveNightOutcome`, `resolveLynch`, plus `flow.mjs` command classifiers,
+  `resolveNightOutcome`, `resolveLynch`, plus `flow.ts` command classifiers,
   the `__BELIEFS__` and `__TURN_STATS__` parsers, durable-log round-trip,
   `buildLabEnv` threading of `thinkingBudget` / `temperature` / `maxTokens`.
-- `tests/eval-aggregate.mjs` — `parseGameLog`, `summarizeGame`, `aggregate`
+- `tests/eval-aggregate.ts` — `parseGameLog`, `summarizeGame`, `aggregate`
   metric computation, filesystem load, empty / malformed / missing-field
   edge cases, scorecard summary string.
-- `tests/eval-run.mjs` — `validateProfile`, `buildRunRequestBody`,
+- `tests/eval-run.ts` — `validateProfile`, `buildRunRequestBody`,
   `extractDurableLogPath`, `extractDoneOk`, end-to-end against a mock HTTP
   server (3-game success path + 500-error failure path), output directory
   layout, scorecard.json persistence.
@@ -193,7 +193,7 @@ explicitly.
   `.generated/games/<id>.jsonl` and appends `game-start`, `round-start`,
   `turn-stats`, `lynch`, `no-lynch`, `wolf-kill`, `wolf-saved`, `no-kill`,
   `seer-learn`, and `game-end` events. `serializeRefereeEvent` and
-  `newRefereeGameId` are pure helpers tested in `tests/lab-web.mjs`.
+  `newRefereeGameId` are pure helpers tested in `tests/lab-web.ts`.
 - Federation timeline: `lib/lab-span.sh` exposes `emit_span` and
   `span_now_ms`. `container/gateway-query.sh` wraps the DuckDB invocation
   with start / end timing and appends a `quack_query` span (scope, name,
@@ -217,9 +217,9 @@ explicitly.
   analysis.
 - **`thinking_budget` / `temperature` / `max_tokens` are first-class env vars**
   on the shim and HTTP request body (`thinkingBudget`, `temperature`,
-  `maxTokens`). `buildLabEnv` in `lib/lab-web-actions.mjs` threads them
+  `maxTokens`). `buildLabEnv` in `lib/lab-web-actions.ts` threads them
   into the child process environment.
-- **Aggregator** (`eval/aggregate.mjs`): pure module + CLI consuming a
+- **Aggregator** (`eval/aggregate.ts`): pure module + CLI consuming a
   directory of `.jsonl` game logs. Scorecard sections:
   - `meta`: game / completed / provider / model counts
   - `prompt_following`: `valid_json_rate`, `action_in_phase_rate`,
@@ -233,7 +233,7 @@ explicitly.
   - `performance`: avg / p50 / p95 latency, avg + total tokens (prompt /
     completion / reasoning)
   - `per_game`: per-log summary
-- **Batch runner** (`eval/run.mjs`): POSTs N games to `/api/run` with
+- **Batch runner** (`eval/run.ts`): POSTs N games to `/api/run` with
   configurable concurrency, captures the durable-log path from each
   game's result, copies the logs into
   `eval/runs/<profile>-<stamp>/game-NNN.jsonl`, then aggregates and
@@ -244,9 +244,9 @@ explicitly.
     Qwen3.5-9B-DeepSeek-V4-Flash-4bit, `thinking_budget=400`,
     `temperature=0.1`, `max_tokens=800`.
 - **Configurable wolf rotation cap**: `wolfRotationCap` in the HTTP body
-  (clamped to [1, 6], default 3). Threaded from `eval/run.mjs` profiles via
+  (clamped to [1, 6], default 3). Threaded from `eval/run.ts` profiles via
   `wolf_rotation_cap`.
-- **Regression gates** (`eval/gates.mjs`): hard floors on `valid_json_rate`,
+- **Regression gates** (`eval/gates.ts`): hard floors on `valid_json_rate`,
   `action_in_phase_rate`, and hard ceilings on `http_error_rate` and
   `incomplete_rate`. Soft band checks on `village_winrate`, `avg_rounds`,
   and `belief_emit_rate`. Each profile can override defaults under a
@@ -254,13 +254,13 @@ explicitly.
   can also point at a committed baseline via `baseline_path`; bands are
   auto-derived from the baseline (winrate ±0.20, rounds ±2, belief floor
   baseline−0.15) unless the profile explicitly overrides them.
-  `eval/run.mjs` evaluates gates after aggregation, writes `gates.json`,
+  `eval/run.ts` evaluates gates after aggregation, writes `gates.json`,
   and exits non-zero on hard failure.
-- **Aggregator order-invariance**: `tests/eval-aggregate.mjs` runs 8
+- **Aggregator order-invariance**: `tests/eval-aggregate.ts` runs 8
   seeded within-game event shuffles and asserts the scorecard is
   byte-identical, so any new aggregator state that introduces an event
   ordering dependency trips the test loudly.
-- **Deep multi-step coverage** (`tests/eval-deep.mjs`): 9 scenarios that
+- **Deep multi-step coverage** (`tests/eval-deep.ts`): 9 scenarios that
   each chain at least three steps. Locks in: (1) mutating a single
   game-end winner shifts only `game_shape`, never `prompt_following` /
   `performance` / `belief_quality`; (2) `runProfile` at concurrency=4 with
@@ -278,7 +278,7 @@ explicitly.
   `skip: true` defeating all hard floors.
 - **Fixtures + committed baseline**: `eval/fixtures/{village-win,wolf-win,
   malformed-turn-stats}.jsonl` are the canonical reference logs;
-  `tests/eval-aggregate.mjs` asserts the aggregator output matches
+  `tests/eval-aggregate.ts` asserts the aggregator output matches
   `eval/baselines/fixtures.json` byte-for-byte after stripping the two
   non-deterministic fields (`meta.generated_at`, `per_game[].path`). Any
   aggregator change that shifts a metric trips this test loudly. The
@@ -325,9 +325,9 @@ layout end to end.
 
 ## Recent additions (2026-05-20)
 
-- **Orchestrator extraction** to `lib/referee.mjs` with a tiny sink contract.
-  Both `bin/lab-web-server.mjs` (HTTP NDJSON sink) and the new
-  `bin/referee.mjs` CLI (stdout sink) drive the same code.
+- **Orchestrator extraction** to `lib/referee.ts` with a tiny sink contract.
+  Both `bin/lab-web-server.ts` (HTTP NDJSON sink) and the new
+  `bin/referee.ts` CLI (stdout sink) drive the same code.
 - **`target_override_rate`** in the aggregator + hard gate ceiling at 0.20.
   `container/agent-act.sh` now emits `raw_target` / `normalized_target` /
   `target_overridden` in the `__TURN_STATS__` marker.
@@ -336,9 +336,9 @@ layout end to end.
   prompt-following rates. Catches phase-specific regressions that a flat
   rate hides.
 - **`__INTENT__` marker** on each agent turn: agent / role / phase / round /
-  action / target / public_text / rationale. `lib/referee.mjs` parses it
+  action / target / public_text / rationale. `lib/referee.ts` parses it
   and appends `agent-intent` events to the durable log.
-- **LLM-as-judge deception pass** in `eval/judge.mjs` + `tests/eval-judge.mjs`.
+- **LLM-as-judge deception pass** in `eval/judge.ts` + `tests/eval-judge.ts`.
   Walks `agent-intent` events, samples wolf day-phase utterances, calls a
   judge model (OpenAI-compatible by default; configurable provider+model),
   writes `judge-verdict` events. Aggregator folds them into
@@ -353,18 +353,18 @@ layout end to end.
 - **Research-grade eval layer**: durable logs now include derived
   `statement`, `belief`, and `wolf-consensus` events; the scorecard adds
   strategy, trust-dynamics, extended deception, and survival-curve metrics.
-  `eval/run.mjs` writes `manifest.json`, `eval/report.mjs` compares runs with
+  `eval/run.ts` writes `manifest.json`, `eval/report.ts` compares runs with
   bootstrap CIs, and promptfoo / Inspect wrappers live under `eval/`.
 
 ## Backlog
 
-1. ~~Promote the orchestrator out of `lab-web-server.mjs`.~~ Done
-   2026-05-20: `lib/referee.mjs` owns `runAutoGame` + child supervision +
+1. ~~Promote the orchestrator out of `lab-web-server.ts`.~~ Done
+   2026-05-20: `lib/referee.ts` owns `runAutoGame` + child supervision +
    `runStep` / `runStepCapture` / `runBufferedStep` / `runAgentPhase` /
    `runFilteredQuery` / `pickRows` / `winnerFor` / `clampInt`. A small
    sink contract (`{ write(type, payload) }`) lets HTTP, stdout, and
-   array sinks drive the same code path. `bin/lab-web-server.mjs` is now
-   HTTP routing only; `bin/referee.mjs` is a standalone CLI that runs
+   array sinks drive the same code path. `bin/lab-web-server.ts` is now
+   HTTP routing only; `bin/referee.ts` is a standalone CLI that runs
    one auto-game from a spec JSON.
 2. Per-host `quack_query` spans: parse `duckdb_logs_parsed('Quack')` output
    and emit one span per remote call instead of the current aggregate span.

@@ -19,15 +19,17 @@ import {
   serializeRefereeEvent,
   toContainerModelUrl,
   toHostModelUrl,
-} from "../lib/lab-web-actions.mjs";
+} from "../lib/lab-web-actions.ts";
 import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { extractJsonArrays, summarizeStep } from "../web/flow.mjs";
+import { extractJsonArrays, summarizeStep } from "../web/flow.ts";
+
+type JsonRecord = Record<string, unknown>;
 
 const html = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
 const makefile = readFileSync(new URL("../Makefile", import.meta.url), "utf8");
-const devRunner = readFileSync(new URL("../bin/lab-web-dev.mjs", import.meta.url), "utf8");
+const devRunner = readFileSync(new URL("../bin/lab-web-dev.ts", import.meta.url), "utf8");
 assert.match(html, /value="stub" checked/);
 assert.match(html, />Scripted</);
 assert.match(html, /data-download/);
@@ -38,11 +40,11 @@ assert.match(html, /data-action="playGame"/);
 assert.doesNotMatch(html, /<select[^>]+id="provider"/);
 assert.match(makefile, /^web-dev:/m);
 assert.match(devRunner, /LAB_WEB_DEV/);
-assert.match(devRunner, /lab-web-server\.mjs/);
+assert.match(devRunner, /lab-web-server\.ts/);
 
-assert.equal(getActionPlan("fullRound").steps.length, 7);
-assert.deepEqual(getActionPlan("fullRound").steps[0], ["./bin/labctl", ["down"]]);
-assert.deepEqual(getActionPlan("day").steps[0], ["./bin/labctl", ["run-day"]]);
+assert.equal(getActionPlan("fullRound").steps?.length, 7);
+assert.deepEqual(getActionPlan("fullRound").steps?.[0], ["./bin/labctl", ["down"]]);
+assert.deepEqual(getActionPlan("day").steps?.[0], ["./bin/labctl", ["run-day"]]);
 assert.equal(getActionPlan("playGame").special, "autoGame");
 assert.ok(listActions().some((action) => action.id === "wolfChannel"));
 assert.ok(listActions().some((action) => action.id === "fullLog"));
@@ -152,14 +154,14 @@ const actionSummary = summarizeStep(
 );
 assert.equal(actionSummary.rows.length, 2);
 assert.equal(actionSummary.title, "Round 1 Discussion");
-assert.equal(actionSummary.rows[1].action, "accuse");
+assert.equal(actionSummary.rows[1]?.action, "accuse");
 
 const voteSummary = summarizeStep(
   "referee round 1 voting",
   "[agent-a] wrote vote for phase=vote\n[agent-b] wrote vote for phase=vote\n",
 );
 assert.equal(voteSummary.title, "Round 1 Voting");
-assert.equal(voteSummary.rows[0].phase, "vote");
+assert.equal(voteSummary.rows[0]?.phase, "vote");
 
 const publicSummary = summarizeStep(
   "referee round 1 discussion log",
@@ -167,60 +169,60 @@ const publicSummary = summarizeStep(
 );
 assert.equal(publicSummary.rows.length, 1);
 assert.equal(publicSummary.title, "Round 1 Public Talk");
-assert.equal(publicSummary.rows[0].round, "1");
-assert.equal(publicSummary.rows[0].text, "agent-a checks the record");
+assert.equal(publicSummary.rows[0]?.round, "1");
+assert.equal(publicSummary.rows[0]?.text, "agent-a checks the record");
 
 const wolfSummary = summarizeStep(
   "referee round 1 wolf log",
   `[gateway] running wolf_channel\n[{"round":1,"agent_id":"agent-a","action":"wolf-kill","target":"agent-b","rationale":"private"}]\n`,
 );
 assert.equal(wolfSummary.title, "Round 1 Wolf Channel");
-assert.equal(wolfSummary.rows[0].target, "agent-b");
+assert.equal(wolfSummary.rows[0]?.target, "agent-b");
 
 const doctorSummary = summarizeStep(
   "referee round 1 doctor log",
   `[gateway] running doctor_channel\n[{"round":1,"agent_id":"agent-e","action":"doctor-save","target":"agent-b","rationale":"protect b"}]\n`,
 );
 assert.equal(doctorSummary.title, "Round 1 Doctor Channel");
-assert.equal(doctorSummary.rows[0].target, "agent-b");
-assert.equal(doctorSummary.rows[0].agent, "agent-e");
+assert.equal(doctorSummary.rows[0]?.target, "agent-b");
+assert.equal(doctorSummary.rows[0]?.agent, "agent-e");
 
 const seerSummary = summarizeStep(
   "referee round 1 seer log",
   `[gateway] running seer_channel\n[{"round":1,"agent_id":"agent-c","action":"seer-investigate","target":"agent-a","rationale":"check a"}]\n`,
 );
 assert.equal(seerSummary.title, "Round 1 Seer Channel");
-assert.equal(seerSummary.rows[0].target, "agent-a");
-assert.equal(seerSummary.rows[0].agent, "agent-c");
+assert.equal(seerSummary.rows[0]?.target, "agent-a");
+assert.equal(seerSummary.rows[0]?.agent, "agent-c");
 
 const doctorPhaseSummary = summarizeStep(
   "referee round 2 doctor",
   "[agent-e] wrote doctor-save for phase=doctor\n",
 );
 assert.equal(doctorPhaseSummary.title, "Round 2 Doctor Action");
-assert.equal(doctorPhaseSummary.rows[0].action, "doctor-save");
+assert.equal(doctorPhaseSummary.rows[0]?.action, "doctor-save");
 
 const seerPhaseSummary = summarizeStep(
   "referee round 2 seer",
   "[agent-c] wrote seer-investigate for phase=seer\n",
 );
 assert.equal(seerPhaseSummary.title, "Round 2 Seer Action");
-assert.equal(seerPhaseSummary.rows[0].action, "seer-investigate");
+assert.equal(seerPhaseSummary.rows[0]?.action, "seer-investigate");
 
 const fullLogSummary = summarizeStep(
   "./bin/labctl query full_log",
   `[{"round":1,"agent_id":"agent-a","action":"vote","target":"agent-b","public_text":"agent-a votes agent-b","rationale":"private note"}]\n`,
 );
 assert.equal(fullLogSummary.rows.length, 1);
-assert.equal(fullLogSummary.rows[0].rationale, "private note");
+assert.equal(fullLogSummary.rows[0]?.rationale, "private note");
 
 const gameSummary = summarizeStep(
   "referee auto-game",
   `[{"winner":"village","reason":"all wolves were eliminated","rounds":2,"alive":["agent-b"],"history":[{"round":1,"phase":"discussion","event":"talk","turns":3},{"round":1,"phase":"day","event":"vote","target":"agent-a","votes":2}]}]\n`,
 );
-assert.equal(gameSummary.metrics[0].value, "village");
-assert.equal(gameSummary.rows[0].count, "3");
-assert.equal(gameSummary.rows[1].target, "agent-a");
+assert.equal(gameSummary.metrics[0]?.value, "village");
+assert.equal(gameSummary.rows[0]?.count, "3");
+assert.equal(gameSummary.rows[1]?.target, "agent-a");
 
 const deniedSummary = summarizeStep(
   "./bin/labctl query denied_private_table",
@@ -263,7 +265,7 @@ assert.deepEqual(
     [{ target: "agent-e" }, { target: "agent-b" }],
   ),
   { outcome: "saved", target: "agent-b", votes: 1 },
-  "multiple doctor proposals: any matching save cancels the kill",
+  "multiple doctor proposals: a matching save cancels the kill",
 );
 
 const wolfRotationRows = [
@@ -273,9 +275,9 @@ const wolfRotationRows = [
   { agent_id: "agent-d", action: "wolf-done", target: "agent-c", decided_at: "2026-05-16 00:00:04" },
 ];
 const latest = latestRowPerAgent(wolfRotationRows);
-assert.equal(latest.get("agent-a").action, "wolf-done");
-assert.equal(latest.get("agent-a").target, "agent-c");
-assert.equal(latest.get("agent-d").action, "wolf-done");
+assert.equal(latest.get("agent-a")?.action, "wolf-done");
+assert.equal(latest.get("agent-a")?.target, "agent-c");
+assert.equal(latest.get("agent-d")?.action, "wolf-done");
 
 const tally = latestKillsPerWolf(wolfRotationRows, ["agent-a", "agent-d"]);
 assert.equal(tally.length, 2);
@@ -308,7 +310,7 @@ const rotationLogSummary = summarizeStep(
   `[{"round":2,"agent_id":"agent-a","action":"wolf-done","target":"agent-c","rationale":"agree"}]\n`,
 );
 assert.equal(rotationLogSummary.title, "Round 2 Wolf Channel (rotation 2)");
-assert.equal(rotationLogSummary.rows[0].target, "agent-c");
+assert.equal(rotationLogSummary.rows[0]?.target, "agent-c");
 
 const privateNotes = new Map([
   ["agent-c", ["Round 1: agent-a is wolf."]],
@@ -336,8 +338,8 @@ assert.deepEqual(sampleContext.eliminated[0], {
   cause: "lynch",
 });
 assert.equal(sampleContext.private_notes[0], "Round 1: agent-a is wolf.");
-assert.equal(sampleContext.public_log[0].speaker, "agent-b");
-assert.equal(sampleContext.public_log[1].action, "accuse");
+assert.equal(sampleContext.public_log[0]?.speaker, "agent-b");
+assert.equal(sampleContext.public_log[1]?.action, "accuse");
 
 const villagerContext = buildContextForAgent("agent-b", {
   round: 2,
@@ -359,7 +361,7 @@ const longLog = Array.from({ length: 25 }, (_, idx) => ({
 }));
 const sliced = buildContextForAgent("agent-b", { round: 2, phase: "day-discuss", publicLog: longLog });
 assert.equal(sliced.public_log.length, 20);
-assert.equal(sliced.public_log[0].text, "msg-5");
+assert.equal(sliced.public_log[0]?.text, "msg-5");
 
 assert.deepEqual(resolveLynch([]), { outcome: "abstain", target: null, votes: 0 });
 assert.deepEqual(
@@ -394,8 +396,8 @@ const intentsContext = buildContextForAgent("agent-a", {
   publicLog: intentsLog,
 });
 assert.equal(intentsContext.own_intents.length, 2);
-assert.equal(intentsContext.own_intents[0].action, "speak");
-assert.equal(intentsContext.own_intents[1].target, "agent-b");
+assert.equal(intentsContext.own_intents[0]?.action, "speak");
+assert.equal(intentsContext.own_intents[1]?.target, "agent-b");
 
 // beliefs feed into context when supplied
 const beliefsByAgent = new Map([
@@ -413,8 +415,10 @@ const beliefsContext = buildContextForAgent("agent-a", {
   beliefsByAgent,
 });
 assert.equal(beliefsContext.beliefs.suspicions.length, 1);
-assert.equal(beliefsContext.beliefs.suspicions[0].target, "agent-b");
-assert.equal(beliefsContext.beliefs.knowledge[0].source, "behavior");
+const suspicion = beliefsContext.beliefs.suspicions[0] as JsonRecord | undefined;
+const knowledge = beliefsContext.beliefs.knowledge[0] as JsonRecord | undefined;
+assert.equal(suspicion?.target, "agent-b");
+assert.equal(knowledge?.source, "behavior");
 
 const emptyBeliefsContext = buildContextForAgent("agent-b", {
   round: 1,
@@ -433,13 +437,13 @@ const sampleStdout = [
 ].join("\n");
 const markers = parseBeliefsMarkers(sampleStdout);
 assert.equal(markers.length, 2);
-assert.equal(markers[0].agent, "agent-a");
-assert.equal(markers[0].suspicions[0].target, "agent-b");
-assert.equal(markers[1].agent, "agent-c");
-assert.equal(markers[1].knowledge[0].content, "x");
+assert.equal(markers[0]?.agent, "agent-a");
+assert.equal(markers[0]?.suspicions[0]?.target, "agent-b");
+assert.equal(markers[1]?.agent, "agent-c");
+assert.equal(markers[1]?.knowledge[0]?.content, "x");
 
 // applyBeliefsMarkers: merges into the running map and clamps unit values
-const beliefsMap = new Map();
+const beliefsMap = new Map<string, { suspicions: JsonRecord[]; knowledge: JsonRecord[] }>();
 applyBeliefsMarkers(beliefsMap, markers);
 applyBeliefsMarkers(beliefsMap, [
   {
@@ -451,15 +455,16 @@ applyBeliefsMarkers(beliefsMap, [
   },
 ]);
 const agentA = beliefsMap.get("agent-a");
+assert.ok(agentA);
 assert.equal(agentA.suspicions.length, 2);
-assert.equal(agentA.suspicions[1].p_wolf, 1);
+assert.equal(agentA.suspicions[1]?.p_wolf, 1);
 assert.equal(agentA.knowledge.length, 1);
-assert.equal(agentA.knowledge[0].confidence, 0);
+assert.equal(agentA.knowledge[0]?.confidence, 0);
 
 const agentC = beliefsMap.get("agent-c");
-assert.equal(agentC.suspicions.length, 0);
-assert.equal(agentC.knowledge.length, 1);
-assert.equal(agentC.knowledge[0].source, "deduction");
+assert.equal(agentC?.suspicions.length, 0);
+assert.equal(agentC?.knowledge.length, 1);
+assert.equal(agentC?.knowledge[0]?.source, "deduction");
 
 assert.deepEqual(parseBeliefsMarkers(""), []);
 assert.deepEqual(parseBeliefsMarkers("nothing relevant here"), []);
@@ -479,28 +484,28 @@ const turnStatsStdout = [
 ].join("\n");
 const turnStats = parseTurnStatsMarkers(turnStatsStdout);
 assert.equal(turnStats.length, 2);
-assert.equal(turnStats[0].agent, "a");
-assert.equal(turnStats[0].parse_path, "stub");
-assert.equal(turnStats[0].valid_json, true);
-assert.equal(turnStats[0].action_in_phase, true);
-assert.equal(turnStats[0].tokens.prompt, 0);
-assert.equal(turnStats[1].agent, "b");
-assert.equal(turnStats[1].provider, "omlx");
-assert.equal(turnStats[1].tokens.prompt, 659);
-assert.equal(turnStats[1].tokens.reasoning, 120);
-assert.equal(turnStats[1].reasoning_content, "I should blend in.");
+assert.equal(turnStats[0]?.agent, "a");
+assert.equal(turnStats[0]?.parse_path, "stub");
+assert.equal(turnStats[0]?.valid_json, true);
+assert.equal(turnStats[0]?.action_in_phase, true);
+assert.equal(turnStats[0]?.tokens.prompt, 0);
+assert.equal(turnStats[1]?.agent, "b");
+assert.equal(turnStats[1]?.provider, "omlx");
+assert.equal(turnStats[1]?.tokens.prompt, 659);
+assert.equal(turnStats[1]?.tokens.reasoning, 120);
+assert.equal(turnStats[1]?.reasoning_content, "I should blend in.");
 
 // type coercion: missing fields default sensibly
 const minimal = parseTurnStatsMarkers('__TURN_STATS__ {"agent":"x"}');
 assert.equal(minimal.length, 1);
-assert.equal(minimal[0].role, "");
-assert.equal(minimal[0].round, 0);
-assert.equal(minimal[0].valid_json, false);
-assert.equal(minimal[0].action_in_phase, false);
-assert.equal(minimal[0].tokens.prompt, 0);
-assert.equal(minimal[0].tokens.completion, 0);
-assert.equal(minimal[0].tokens.reasoning, 0);
-assert.equal(minimal[0].latency_ms, 0);
+assert.equal(minimal[0]?.role, "");
+assert.equal(minimal[0]?.round, 0);
+assert.equal(minimal[0]?.valid_json, false);
+assert.equal(minimal[0]?.action_in_phase, false);
+assert.equal(minimal[0]?.tokens.prompt, 0);
+assert.equal(minimal[0]?.tokens.completion, 0);
+assert.equal(minimal[0]?.tokens.reasoning, 0);
+assert.equal(minimal[0]?.latency_ms, 0);
 
 // dropping markers with no agent
 assert.deepEqual(parseTurnStatsMarkers('__TURN_STATS__ {"role":"villager"}'), []);
@@ -537,11 +542,11 @@ try {
     await appendFile(logPath, serializeRefereeEvent(evt, "2026-05-18T00:00:00.000Z"));
   }
   const raw = await readFile(logPath, "utf8");
-  const lines = raw.trim().split("\n").map((line) => JSON.parse(line));
+  const lines = raw.trim().split("\n").map((line) => JSON.parse(line) as JsonRecord);
   assert.equal(lines.length, 4);
-  assert.equal(lines[0].kind, "game-start");
-  assert.equal(lines[2].target, "agent-a");
-  assert.equal(lines[3].winner, "village");
+  assert.equal(lines[0]?.kind, "game-start");
+  assert.equal(lines[2]?.target, "agent-a");
+  assert.equal(lines[3]?.winner, "village");
 } finally {
   await rm(tmpDir, { recursive: true, force: true });
 }

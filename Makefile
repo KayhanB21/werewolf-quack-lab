@@ -1,4 +1,6 @@
-.PHONY: up down logs test web web-dev web-test eval-test eval-run eval-report eval-matrix eval-inspect-test eval-large eval-mini eval-nothink eval-7p eval-hot eval-anthropic eval-all-omlx baseline-refresh baseline-check whoami public wolf full denied shell
+.PHONY: up down logs test check typecheck build-web web web-dev web-test eval-test eval-run eval-report eval-matrix eval-inspect-test eval-large eval-mini eval-nothink eval-7p eval-hot eval-anthropic eval-all-omlx baseline-refresh baseline-check whoami public wolf full denied shell
+
+TSX := node --import tsx
 
 up:
 	./bin/labctl up
@@ -12,30 +14,41 @@ logs:
 test:
 	./bin/smoke-test.sh
 
+check:
+	npm run check
+
+typecheck:
+	npm run typecheck
+
+build-web:
+	npm run build:web
+
 web:
-	node ./bin/lab-web-server.mjs
+	npm run build:web
+	$(TSX) ./bin/lab-web-server.ts
 
 web-dev:
-	node ./bin/lab-web-dev.mjs
+	npm run build:web
+	$(TSX) ./bin/lab-web-dev.ts
 
 web-test:
-	node ./tests/lab-web.mjs
-	node ./tests/referee.mjs
+	$(TSX) ./tests/lab-web.ts
+	$(TSX) ./tests/referee.ts
 
 eval-test:
-	node ./tests/eval-aggregate.mjs
-	node ./tests/eval-gates.mjs
-	node ./tests/eval-run.mjs
-	node ./tests/eval-judge.mjs
-	node ./tests/eval-deep.mjs
-	node ./tests/eval-report.mjs
+	$(TSX) ./tests/eval-aggregate.ts
+	$(TSX) ./tests/eval-gates.ts
+	$(TSX) ./tests/eval-run.ts
+	$(TSX) ./tests/eval-judge.ts
+	$(TSX) ./tests/eval-deep.ts
+	$(TSX) ./tests/eval-report.ts
 
 eval-run:
 	@if [ -z "$(PROFILE)" ]; then echo "usage: make eval-run PROFILE=eval/profiles/stub-smoke.json"; exit 1; fi
-	node ./eval/run.mjs $(PROFILE)
+	$(TSX) ./eval/run.ts $(PROFILE)
 
 eval-report:
-	node ./eval/report.mjs ./eval/runs --out ./eval/runs/report.md --json ./eval/runs/report.json
+	$(TSX) ./eval/report.ts ./eval/runs --out ./eval/runs/report.md --json ./eval/runs/report.json
 
 eval-matrix:
 	npm run eval:matrix
@@ -44,38 +57,38 @@ eval-inspect-test:
 	uv run --project eval/inspect python -m py_compile eval/inspect/werewolf_task.py
 
 eval-large:
-	node ./eval/run.mjs ./eval/profiles/omlx-large.json
+	$(TSX) ./eval/run.ts ./eval/profiles/omlx-large.json
 
 eval-mini:
-	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-mini.json
+	$(TSX) ./eval/run.ts ./eval/profiles/omlx-qwen35-mini.json
 
 eval-nothink:
-	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-nothink.json
+	$(TSX) ./eval/run.ts ./eval/profiles/omlx-qwen35-nothink.json
 
 eval-7p:
-	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-7p.json
+	$(TSX) ./eval/run.ts ./eval/profiles/omlx-qwen35-7p.json
 
 eval-hot:
-	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-hot.json
+	$(TSX) ./eval/run.ts ./eval/profiles/omlx-qwen35-hot.json
 
 # Run every omlx profile back-to-back. Each profile has its own gates;
 # the first failure short-circuits.
 eval-anthropic:
-	node ./eval/run.mjs ./eval/profiles/anthropic-haiku.json
+	$(TSX) ./eval/run.ts ./eval/profiles/anthropic-haiku.json
 
 eval-all-omlx:
-	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-mini.json
-	node ./eval/run.mjs ./eval/profiles/omlx-qwen35.json
-	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-nothink.json
-	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-7p.json
-	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-hot.json
-	node ./eval/run.mjs ./eval/profiles/omlx-large.json
+	$(TSX) ./eval/run.ts ./eval/profiles/omlx-qwen35-mini.json
+	$(TSX) ./eval/run.ts ./eval/profiles/omlx-qwen35.json
+	$(TSX) ./eval/run.ts ./eval/profiles/omlx-qwen35-nothink.json
+	$(TSX) ./eval/run.ts ./eval/profiles/omlx-qwen35-7p.json
+	$(TSX) ./eval/run.ts ./eval/profiles/omlx-qwen35-hot.json
+	$(TSX) ./eval/run.ts ./eval/profiles/omlx-large.json
 
 baseline-refresh:
-	node ./eval/baseline-refresh.mjs
+	$(TSX) ./eval/baseline-refresh.ts
 
 baseline-check:
-	node ./eval/baseline-refresh.mjs --check
+	$(TSX) ./eval/baseline-refresh.ts --check
 
 whoami:
 	./bin/labctl query whoami

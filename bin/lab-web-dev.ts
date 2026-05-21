@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
-const SERVER_ENTRY = "bin/lab-web-server.mjs";
+const SERVER_ENTRY = "bin/lab-web-server.ts";
 const WATCH_ROOTS = ["bin", "lib", "container", "eval", "web", "sql", "config", "Dockerfile", "docker-compose.yml", "Makefile"];
 const POLL_INTERVAL_MS = Number(process.env.LAB_WEB_POLL_MS || 500);
 const IGNORED_DIRS = new Set([".git", ".generated", "node_modules"]);
@@ -15,27 +15,29 @@ const WATCH_EXTENSIONS = new Set([
   ".js",
   ".json",
   ".md",
-  ".mjs",
+  ".ts",
   ".sh",
   ".sql",
   ".yml",
 ]);
 const WATCH_FILES = new Set(["Dockerfile", "Makefile"]);
 
-let snapshot = collectSnapshot();
-let server = null;
-let restartTimer = null;
-let killTimer = null;
-let pollTimer = null;
+type Snapshot = Map<string, string>;
+
+let snapshot: Snapshot = collectSnapshot();
+let server: ChildProcess | null = null;
+let restartTimer: NodeJS.Timeout | null = null;
+let killTimer: NodeJS.Timeout | null = null;
+let pollTimer: NodeJS.Timeout | null = null;
 let restarting = false;
 let stopping = false;
 let restartReason = "";
 
-function startServer() {
-  clearTimeout(killTimer);
+function startServer(): void {
+  if (killTimer) clearTimeout(killTimer);
   killTimer = null;
 
-  server = spawn(process.execPath, [SERVER_ENTRY], {
+  server = spawn("./node_modules/.bin/tsx", [SERVER_ENTRY], {
     cwd: ROOT_DIR,
     env: {
       ...process.env,
@@ -59,14 +61,14 @@ function startServer() {
   });
 }
 
-function scheduleRestart(reason) {
+function scheduleRestart(reason: string): void {
   if (stopping) return;
   restartReason = reason;
-  clearTimeout(restartTimer);
+  if (restartTimer) clearTimeout(restartTimer);
   restartTimer = setTimeout(restartServer, 150);
 }
 
-function restartServer() {
+function restartServer(): void {
   if (stopping) return;
   console.log(`[web-dev] ${restartReason} changed, restarting web server`);
 
@@ -82,15 +84,15 @@ function restartServer() {
   }, 3000);
 }
 
-function collectSnapshot() {
-  const files = new Map();
+function collectSnapshot(): Snapshot {
+  const files: Snapshot = new Map();
   for (const root of WATCH_ROOTS) {
     scanPath(path.join(ROOT_DIR, root), files);
   }
   return files;
 }
 
-function scanPath(target, files) {
+function scanPath(target: string, files: Snapshot): void {
   if (!existsSync(target)) return;
 
   const info = statSync(target);
@@ -107,7 +109,7 @@ function scanPath(target, files) {
   }
 }
 
-function pollForChanges() {
+function pollForChanges(): void {
   const nextSnapshot = collectSnapshot();
   const changedPath = findChangedPath(snapshot, nextSnapshot);
   snapshot = nextSnapshot;
@@ -117,7 +119,7 @@ function pollForChanges() {
   }
 }
 
-function findChangedPath(previous, next) {
+function findChangedPath(previous: Snapshot, next: Snapshot): string | null {
   for (const [filePath, signature] of next) {
     if (previous.get(filePath) !== signature) return filePath;
   }
@@ -127,19 +129,19 @@ function findChangedPath(previous, next) {
   return null;
 }
 
-function shouldRestartFor(filePath) {
+function shouldRestartFor(filePath: string): boolean {
   return WATCH_FILES.has(path.basename(filePath)) || WATCH_EXTENSIONS.has(path.extname(filePath));
 }
 
-function relativePath(filePath) {
+function relativePath(filePath: string): string {
   return path.relative(ROOT_DIR, filePath) || ".";
 }
 
-function shutdown(signal) {
+function shutdown(signal: NodeJS.Signals): void {
   stopping = true;
-  clearTimeout(restartTimer);
-  clearTimeout(killTimer);
-  clearInterval(pollTimer);
+  if (restartTimer) clearTimeout(restartTimer);
+  if (killTimer) clearTimeout(killTimer);
+  if (pollTimer) clearInterval(pollTimer);
 
   if (server && !server.killed) {
     server.kill("SIGTERM");

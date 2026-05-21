@@ -4,30 +4,118 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { aggregate, formatScorecardSummary, loadGameLogs } from "./aggregate.mjs";
-import { evaluateGates, formatGateReport } from "./gates.mjs";
+import { aggregate, formatScorecardSummary, loadGameLogs } from "./aggregate.ts";
+import { evaluateGates, formatGateReport, type GateConfig, type GateReport } from "./gates.ts";
 
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 const REQUIRED_FIELDS = ["name", "provider", "game_count", "players"];
 const ROLE_REQUIREMENTS = ["wolf", "seer", "doctor"];
 
-function stableStringify(value) {
+type JsonRecord = Record<string, unknown>;
+type PlayerProfile = { id: string; role: string };
+export type EvalProfile = JsonRecord & {
+  name: string;
+  provider: string;
+  game_count: number;
+  players: PlayerProfile[];
+  model?: string;
+  base_url: string;
+  api_key_env: string;
+  concurrency: number;
+  max_rounds: number;
+  wolf_rotation_cap: number;
+  thinking_budget: unknown;
+  temperature: number;
+  max_tokens: number;
+  gates: Partial<GateConfig> | null;
+  baseline_path: string | null;
+  scenario_id: string;
+  judge: unknown;
+};
+type RunOptions = {
+  server?: string;
+  apiKey?: string;
+  writeOut?: boolean;
+  allowMissingApiKey?: boolean;
+  outDir?: string;
+  onLog?: (event: GameLogEvent) => void;
+};
+type GameLogEvent = { gameIndex: number; durable: string | null; ok: boolean };
+type GameResult = {
+  ok: boolean;
+  gameIndex: number;
+  durable?: string | null;
+  error?: string;
+  ms: number;
+  copy_error?: string;
+};
+type RunRequestBody = JsonRecord & {
+  action: "playGame";
+  provider: string;
+  model?: string;
+  baseUrl?: string;
+  apiKey?: string;
+  players: PlayerProfile[];
+  maxRounds: number;
+  wolfRotationCap: number;
+  thinkingBudget?: unknown;
+  temperature: number;
+  maxTokens: number;
+};
+type RunManifest = {
+  run_id: string;
+  started_at: string;
+  completed_at?: string;
+  completed_games?: number;
+  profile_name: string;
+  scenario_id: string;
+  profile_hash: string;
+  git_commit: string;
+  server: string;
+  provider: string;
+  model: string;
+  base_url_class: string;
+  game_count: number;
+  concurrency: number;
+  max_rounds: number;
+  wolf_rotation_cap: number;
+  thinking_budget: unknown;
+  temperature: number;
+  max_tokens: number;
+  players: PlayerProfile[];
+  judge: unknown;
+};
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function str(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : value == null ? fallback : String(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
   if (value && typeof value === "object") {
-    return `{${Object.keys(value)
+    const record = value as JsonRecord;
+    return `{${Object.keys(record)
       .sort()
-      .map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`)
+      .map((k) => `${JSON.stringify(k)}:${stableStringify(record[k])}`)
       .join(",")}}`;
   }
   return JSON.stringify(value);
 }
 
-export function hashProfile(profile) {
+export function hashProfile(profile: unknown): string {
   return createHash("sha256").update(stableStringify(profile)).digest("hex").slice(0, 16);
 }
 
-async function gitCommit() {
+async function gitCommit(): Promise<string> {
   return new Promise((resolve) => {
     execFile("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOT_DIR }, (error, stdout) => {
       if (error) resolve("");
@@ -36,62 +124,69 @@ async function gitCommit() {
   });
 }
 
-function urlHost(value) {
+function urlHost(value: unknown): string {
   if (!value) return "";
   try {
-    return new URL(value).host;
+    return new URL(str(value)).host;
   } catch {
     return String(value);
   }
 }
 
-export function validateProfile(profile) {
+export function validateProfile(profile: unknown): EvalProfile {
   if (!profile || typeof profile !== "object") {
     throw new Error("profile must be an object");
   }
+  const raw = profile as JsonRecord;
   for (const f of REQUIRED_FIELDS) {
-    if (profile[f] === undefined || profile[f] === null) {
+    if (raw[f] === undefined || raw[f] === null) {
       throw new Error(`profile missing required field: ${f}`);
     }
   }
-  if (!Number.isInteger(profile.game_count) || profile.game_count < 1) {
+  if (!Number.isInteger(raw.game_count) || Number(raw.game_count) < 1) {
     throw new Error("profile.game_count must be a positive integer");
   }
-  if (!Array.isArray(profile.players) || profile.players.length < 3) {
+  if (!Array.isArray(raw.players) || raw.players.length < 3) {
     throw new Error("profile.players must list at least 3 players");
   }
-  const roleSet = new Set(profile.players.map((p) => p.role));
+  const players = raw.players.filter(isRecord).map((p) => ({ id: str(p.id), role: str(p.role) }));
+  const roleSet = new Set(players.map((p) => p.role));
   for (const r of ROLE_REQUIREMENTS) {
     if (!roleSet.has(r)) {
       throw new Error(`profile.players must include role: ${r}`);
     }
   }
-  const conc = profile.concurrency ?? 1;
+  const conc = Number(raw.concurrency ?? 1);
   if (!Number.isInteger(conc) || conc < 1 || conc > 8) {
     throw new Error("profile.concurrency must be an integer in [1, 8]");
   }
-  const wolfCap = profile.wolf_rotation_cap ?? 3;
+  const wolfCap = Number(raw.wolf_rotation_cap ?? 3);
   if (!Number.isInteger(wolfCap) || wolfCap < 1 || wolfCap > 6) {
     throw new Error("profile.wolf_rotation_cap must be an integer in [1, 6]");
   }
   return {
-    ...profile,
-    concurrency: conc,
-    max_rounds: profile.max_rounds ?? 8,
-    wolf_rotation_cap: wolfCap,
-    thinking_budget: profile.thinking_budget ?? null,
-    temperature: profile.temperature ?? 0.2,
-    max_tokens: profile.max_tokens ?? 260,
-    base_url: profile.base_url ?? "",
-    api_key_env: profile.api_key_env ?? "",
-    gates: profile.gates ?? null,
-    baseline_path: profile.baseline_path ?? null,
-    scenario_id: profile.scenario_id ?? profile.name,
-    judge: profile.judge ?? null,
+    ...raw,
+    name: str(raw.name),
+    provider: str(raw.provider),
+    game_count: Number(raw.game_count),
+    players,
+    model: raw.model === undefined ? undefined : str(raw.model),
+    concurrency: Number(conc),
+    max_rounds: Number(raw.max_rounds ?? 8),
+    wolf_rotation_cap: Number(wolfCap),
+    thinking_budget: raw.thinking_budget ?? null,
+    temperature: Number(raw.temperature ?? 0.2),
+    max_tokens: Number(raw.max_tokens ?? 260),
+    base_url: str(raw.base_url),
+    api_key_env: str(raw.api_key_env),
+    gates: isRecord(raw.gates) ? raw.gates as Partial<GateConfig> : null,
+    baseline_path: typeof raw.baseline_path === "string" ? raw.baseline_path : null,
+    scenario_id: str(raw.scenario_id ?? raw.name),
+    judge: raw.judge ?? null,
   };
 }
 
-export function buildRunRequestBody(profile, apiKey) {
+export function buildRunRequestBody(profile: EvalProfile, apiKey: string): RunRequestBody {
   return {
     action: "playGame",
     provider: profile.provider,
@@ -109,21 +204,22 @@ export function buildRunRequestBody(profile, apiKey) {
 
 // Pure: scan an NDJSON stream string for the durable_log path inside the
 // autoGame's stdout result event. Returns relative path or null.
-export function extractDurableLogPath(ndjson) {
+export function extractDurableLogPath(ndjson: string): string | null {
   if (!ndjson) return null;
   for (const line of ndjson.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed.startsWith("{")) continue;
     try {
-      const evt = JSON.parse(trimmed);
-      if (evt.type !== "stdout" || typeof evt.data !== "string") continue;
+      const evt: unknown = JSON.parse(trimmed);
+      if (!isRecord(evt) || evt.type !== "stdout" || typeof evt.data !== "string") continue;
       // result is emitted as JSON.stringify([result]) by runAutoGame
       const start = evt.data.indexOf("[{");
       if (start < 0) continue;
       const slice = evt.data.slice(start);
-      const parsed = JSON.parse(slice);
-      if (Array.isArray(parsed) && parsed[0]?.durable_log) {
-        return String(parsed[0].durable_log);
+      const parsed: unknown = JSON.parse(slice);
+      const first = Array.isArray(parsed) ? parsed[0] : undefined;
+      if (isRecord(first) && first.durable_log) {
+        return String(first.durable_log);
       }
     } catch {
       // ignore non-JSON noise
@@ -133,14 +229,14 @@ export function extractDurableLogPath(ndjson) {
 }
 
 // Pure: scan the stream for {type: "done", ok: bool}; returns true|false|null.
-export function extractDoneOk(ndjson) {
+export function extractDoneOk(ndjson: string): boolean | null {
   if (!ndjson) return null;
   for (const line of ndjson.split(/\r?\n/).reverse()) {
     const trimmed = line.trim();
     if (!trimmed.startsWith("{")) continue;
     try {
-      const evt = JSON.parse(trimmed);
-      if (evt.type === "done") return evt.ok === true;
+      const evt: unknown = JSON.parse(trimmed);
+      if (isRecord(evt) && evt.type === "done") return evt.ok === true;
     } catch {
       // ignore
     }
@@ -148,7 +244,8 @@ export function extractDoneOk(ndjson) {
   return null;
 }
 
-export async function streamNdjsonToText(stream) {
+export async function streamNdjsonToText(stream: ReadableStream<Uint8Array> | null): Promise<string> {
+  if (!stream) return "";
   const decoder = new TextDecoder();
   let text = "";
   for await (const chunk of stream) {
@@ -157,7 +254,15 @@ export async function streamNdjsonToText(stream) {
   return text;
 }
 
-async function postOneGame({ profile, apiKey, server, gameIndex, onLog }) {
+async function postOneGame(
+  { profile, apiKey, server, gameIndex, onLog }: {
+    profile: EvalProfile;
+    apiKey: string;
+    server: string;
+    gameIndex: number;
+    onLog?: (event: GameLogEvent) => void;
+  },
+): Promise<GameResult> {
   const body = buildRunRequestBody(profile, apiKey);
   const url = `${server.replace(/\/$/, "")}/api/run`;
   const startMs = Date.now();
@@ -181,7 +286,7 @@ async function postOneGame({ profile, apiKey, server, gameIndex, onLog }) {
   return { ok, gameIndex, durable, ms: Date.now() - startMs };
 }
 
-export async function runProfile(profile, opts = {}) {
+export async function runProfile(profile: unknown, opts: RunOptions = {}) {
   const validated = validateProfile(profile);
   const server = opts.server || "http://localhost:5174";
   const apiKey = opts.apiKey || (validated.api_key_env ? process.env[validated.api_key_env] || "" : "");
@@ -190,14 +295,14 @@ export async function runProfile(profile, opts = {}) {
 
   if (validated.api_key_env && !apiKey && opts.allowMissingApiKey !== true) {
     throw new Error(
-      `${validated.name} requires ${validated.api_key_env}; set it in the environment that runs eval/run.mjs or starts the web server`,
+      `${validated.name} requires ${validated.api_key_env}; set it in the environment that runs eval/run.ts or starts the web server`,
     );
   }
 
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
   const outDir = opts.outDir || path.join(ROOT_DIR, "eval", "runs", `${validated.name}-${stamp}`);
   if (writeOut) await mkdir(outDir, { recursive: true });
-  const manifest = {
+  const manifest: RunManifest = {
     run_id: `${validated.name}-${stamp}`,
     started_at: startedAt,
     profile_name: validated.name,
@@ -223,10 +328,10 @@ export async function runProfile(profile, opts = {}) {
   }
 
   const queue = [...Array(validated.game_count).keys()];
-  const results = new Array(validated.game_count);
+  const results: Array<GameResult | undefined> = new Array(validated.game_count);
   const concurrency = Math.min(validated.concurrency, queue.length);
 
-  const worker = async () => {
+  const worker = async (): Promise<void> => {
     while (queue.length > 0) {
       const idx = queue.shift();
       if (idx === undefined) return;
@@ -234,9 +339,12 @@ export async function runProfile(profile, opts = {}) {
     }
   };
   await Promise.all(Array.from({ length: concurrency }, worker));
+  const finalResults: GameResult[] = results.map((result, index) =>
+    result ?? { ok: false, gameIndex: index, error: "worker did not produce a result", ms: 0 },
+  );
 
-  const collectedLogs = [];
-  for (const r of results) {
+  const collectedLogs: string[] = [];
+  for (const r of finalResults) {
     if (!r || !r.durable) continue;
     const absSrc = path.isAbsolute(r.durable) ? r.durable : path.join(ROOT_DIR, r.durable);
     if (writeOut) {
@@ -245,15 +353,15 @@ export async function runProfile(profile, opts = {}) {
         await copyFile(absSrc, dest);
         collectedLogs.push(dest);
       } catch (error) {
-        r.copy_error = error.message;
+        r.copy_error = errorMessage(error);
       }
     } else {
       collectedLogs.push(absSrc);
     }
   }
 
-  let scorecard = null;
-  let gateReport = null;
+  let scorecard: ReturnType<typeof aggregate> | null = null;
+  let gateReport: GateReport | null = null;
   if (collectedLogs.length > 0) {
     const games = await loadGameLogs(writeOut ? outDir : collectedLogs[0]);
     scorecard = aggregate(games);
@@ -265,7 +373,7 @@ export async function runProfile(profile, opts = {}) {
       try {
         baseline = JSON.parse(await readFile(absBaseline, "utf8"));
       } catch (error) {
-        console.error(`[eval-run] baseline_path ${validated.baseline_path}: ${error.message}`);
+        console.error(`[eval-run] baseline_path ${validated.baseline_path}: ${errorMessage(error)}`);
       }
     }
     gateReport = evaluateGates(scorecard, validated.gates, { baseline });
@@ -281,14 +389,14 @@ export async function runProfile(profile, opts = {}) {
     await writeFile(path.join(outDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   }
 
-  return { profile: validated, results, scorecard, gateReport, outDir, manifest };
+  return { profile: validated, results: finalResults, scorecard, gateReport, outDir, manifest };
 }
 
 const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
   const args = process.argv.slice(2);
   if (args.length === 0) {
-    console.error("usage: eval-run.mjs <profile.json> [--server URL] [--out DIR]");
+    console.error("usage: eval-run.ts <profile.json> [--server URL] [--out DIR]");
     process.exit(2);
   }
   const profilePath = args.find((a) => !a.startsWith("--"));
@@ -296,10 +404,12 @@ if (isMain) {
   const outIdx = args.indexOf("--out");
   const server = serverIdx >= 0 ? args[serverIdx + 1] : undefined;
   const outDir = outIdx >= 0 ? args[outIdx + 1] : undefined;
-  const profile = JSON.parse(await readFile(profilePath, "utf8"));
+  if (!profilePath) throw new Error("missing profile path");
+  const profile = JSON.parse(await readFile(profilePath, "utf8")) as unknown;
 
-  console.error(`[eval-run] profile=${profile.name} games=${profile.game_count} concurrency=${profile.concurrency ?? 1}`);
-  const onLog = ({ gameIndex, ok, durable }) => {
+  const profileRecord = isRecord(profile) ? profile : {};
+  console.error(`[eval-run] profile=${str(profileRecord.name)} games=${str(profileRecord.game_count)} concurrency=${str(profileRecord.concurrency ?? 1)}`);
+  const onLog = ({ gameIndex, ok, durable }: GameLogEvent): void => {
     console.error(`[eval-run] game ${gameIndex + 1}: ${ok ? "ok" : "FAIL"} log=${durable || "(none)"}`);
   };
   const result = await runProfile(profile, { server, outDir, onLog });

@@ -1,31 +1,62 @@
-import { classifyCommand, summarizeStep } from "./flow.mjs";
+import { classifyCommand, summarizeStep, type StepSummary } from "./flow.js";
 
-const form = document.querySelector("#settings");
-const log = document.querySelector("#log");
-const timeline = document.querySelector("#timeline");
-const statusEl = document.querySelector("#status");
-const activeCommand = document.querySelector("#activeCommand");
-const providerInputs = [...document.querySelectorAll("input[name='provider']")];
-const playerCount = document.querySelector("#playerCount");
-const playerRoster = document.querySelector("#playerRoster");
-const model = document.querySelector("#model");
-const baseUrl = document.querySelector("#baseUrl");
-const apiKey = document.querySelector("#apiKey");
-const postGame = document.querySelector("#postGame");
-const buttons = [...document.querySelectorAll("[data-action]")];
-const discoverButton = document.querySelector("[data-discover]");
-const downloadButton = document.querySelector("[data-download]");
-const clearButton = document.querySelector("[data-clear]");
+type Role = "wolf" | "villager" | "seer" | "doctor";
+type Provider = "stub" | "omlx" | "openai-compatible" | "openai";
+type Player = { id: string; role: Role };
+type CurrentStep = {
+  command: string;
+  raw: string;
+  item: HTMLElement;
+  live: HTMLElement;
+  body: HTMLElement;
+  pill: HTMLElement;
+};
+type RecordValue = Record<string, unknown>;
+
+function qs<T extends Element>(selector: string): T {
+  const element = document.querySelector<T>(selector);
+  if (!element) throw new Error(`missing required element: ${selector}`);
+  return element;
+}
+
+function asRecord(value: unknown): RecordValue {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as RecordValue) : {};
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+const form = qs<HTMLFormElement>("#settings");
+const log = qs<HTMLElement>("#log");
+const timeline = qs<HTMLElement>("#timeline");
+const statusEl = qs<HTMLElement>("#status");
+const activeCommand = qs<HTMLElement>("#activeCommand");
+const providerInputs = [...document.querySelectorAll<HTMLInputElement>("input[name='provider']")];
+const playerCount = qs<HTMLInputElement>("#playerCount");
+const playerRoster = qs<HTMLElement>("#playerRoster");
+const model = qs<HTMLInputElement>("#model");
+const baseUrl = qs<HTMLInputElement>("#baseUrl");
+const apiKey = qs<HTMLInputElement>("#apiKey");
+const postGame = qs<HTMLInputElement>("#postGame");
+const buttons = [...document.querySelectorAll<HTMLButtonElement>("[data-action]")];
+const discoverButton = qs<HTMLButtonElement>("[data-discover]");
+const downloadButton = qs<HTMLButtonElement>("[data-download]");
+const clearButton = qs<HTMLButtonElement>("[data-clear]");
 
 let running = false;
-let currentStep = null;
+let currentStep: CurrentStep | null = null;
 
-const roles = ["wolf", "villager", "seer", "doctor"];
-const providerModelDefaults = {
+const roles: Role[] = ["wolf", "villager", "seer", "doctor"];
+const providerModelDefaults: Partial<Record<Provider, string>> = {
   openai: "gpt-4o-mini",
 };
 const knownProviderModels = new Set(Object.values(providerModelDefaults));
-let players = [
+let players: Player[] = [
   { id: "agent-a", role: "wolf" },
   { id: "agent-b", role: "villager" },
   { id: "agent-c", role: "seer" },
@@ -33,12 +64,12 @@ let players = [
   { id: "agent-e", role: "doctor" },
 ];
 
-function setStatus(text, state = "idle") {
+function setStatus(text: string, state = "idle"): void {
   statusEl.textContent = text;
   statusEl.dataset.state = state;
 }
 
-function setRunning(next) {
+function setRunning(next: boolean): void {
   running = next;
   buttons.forEach((button) => {
     button.disabled = next;
@@ -51,7 +82,7 @@ function setRunning(next) {
   updateProviderState();
 }
 
-function appendRaw(text, className = "") {
+function appendRaw(text: string, className = ""): void {
   const span = document.createElement("span");
   if (className) span.className = className;
   span.textContent = text;
@@ -59,14 +90,15 @@ function appendRaw(text, className = "") {
   log.scrollTop = log.scrollHeight;
 }
 
-function appendRawLine(text, className = "") {
+function appendRawLine(text: string, className = ""): void {
   appendRaw(`${text}\n`, className);
 }
 
 function settings() {
+  const data = new FormData(form);
   return {
     provider: selectedProvider(),
-    round: form.elements.round.value,
+    round: stringValue(data.get("round")) || "1",
     model: model.value,
     baseUrl: baseUrl.value,
     apiKey: apiKey.value,
@@ -75,11 +107,13 @@ function settings() {
   };
 }
 
-function selectedProvider() {
-  return form.elements.provider.value || "stub";
+function selectedProvider(): Provider {
+  const value = stringValue(new FormData(form).get("provider"));
+  if (value === "omlx" || value === "openai-compatible" || value === "openai") return value;
+  return "stub";
 }
 
-function renderPlayers() {
+function renderPlayers(): void {
   const count = clampPlayerCount(Number(playerCount.value || players.length));
   players = Array.from({ length: count }, (_, index) => ({
     id: agentId(index),
@@ -89,7 +123,7 @@ function renderPlayers() {
   playerRoster.replaceChildren(...players.map(playerRow));
 }
 
-function playerRow(player, index) {
+function playerRow(player: Player, index: number): HTMLElement {
   const row = document.createElement("label");
   row.className = "player-row";
   const name = document.createElement("span");
@@ -106,32 +140,33 @@ function playerRow(player, index) {
     select.append(option);
   });
   select.addEventListener("change", () => {
-    players[index] = { ...players[index], role: select.value };
+    const role = roles.includes(select.value as Role) ? (select.value as Role) : "villager";
+    players[index] = { ...(players[index] || player), role };
   });
 
   row.append(name, select);
   return row;
 }
 
-function clampPlayerCount(value) {
+function clampPlayerCount(value: number): number {
   if (!Number.isFinite(value)) return 5;
   return Math.min(12, Math.max(3, Math.trunc(value)));
 }
 
-function defaultRole(index) {
+function defaultRole(index: number): Role {
   if (index === 0 || index === 3) return "wolf";
   if (index === 2) return "seer";
   if (index === 4) return "doctor";
   return "villager";
 }
 
-function agentId(index) {
+function agentId(index: number): string {
   const alphabet = "abcdefghijklmnopqrstuvwxyz";
   if (index < alphabet.length) return `agent-${alphabet[index]}`;
   return `agent-${index + 1}`;
 }
 
-function applyProviderDefaults() {
+function applyProviderDefaults(): void {
   const value = selectedProvider();
   if (value === "stub") {
     model.value = "";
@@ -145,18 +180,18 @@ function applyProviderDefaults() {
   } else if (value === "openai") {
     baseUrl.value = "https://api.openai.com/v1";
     if (shouldApplyModelDefault()) {
-      model.value = providerModelDefaults.openai;
+      model.value = providerModelDefaults.openai ?? "";
     }
   }
   updateProviderState();
 }
 
-function shouldApplyModelDefault() {
+function shouldApplyModelDefault(): boolean {
   const current = model.value.trim();
   return !current || knownProviderModels.has(current) || current.startsWith("MLX-");
 }
 
-function updateProviderState() {
+function updateProviderState(): void {
   const value = selectedProvider();
   const isScripted = value === "stub";
   const modelPlaceholders = {
@@ -174,7 +209,7 @@ function updateProviderState() {
   model.placeholder = modelPlaceholders[value] || "model id";
 }
 
-function startRunCard(action) {
+function startRunCard(action: string): HTMLElement {
   const card = document.createElement("article");
   card.className = "run-card";
   card.innerHTML = `
@@ -189,7 +224,7 @@ function startRunCard(action) {
   return card;
 }
 
-function startStep(command) {
+function startStep(command: string): void {
   const meta = classifyCommand(command);
   const item = document.createElement("article");
   item.className = "step-card";
@@ -211,29 +246,29 @@ function startStep(command) {
     command,
     raw: "",
     item,
-    live: item.querySelector(".step-live"),
-    body: item.querySelector(".step-body"),
-    pill: item.querySelector(".pill"),
+    live: item.querySelector<HTMLElement>(".step-live") || item,
+    body: item.querySelector<HTMLElement>(".step-body") || item,
+    pill: item.querySelector<HTMLElement>(".pill") || item,
   };
 }
 
-function collectOutput(text) {
+function collectOutput(text: string): void {
   if (!currentStep) return;
   currentStep.raw += text;
   updateLiveStep(currentStep);
 }
 
-function updateLiveStep(step) {
+function updateLiveStep(step: CurrentStep): void {
   const commandKind = classifyCommand(step.command).kind;
   if (commandKind !== "actions") return;
 
   const rows = [...step.raw.matchAll(/\[(agent-[^\]]+)\] wrote ([^ ]+) for phase=([a-z]+)/g)];
   step.live.replaceChildren(
-    ...rows.map(([, agent, action, phase]) => chip(`${agent} ${action}`, phase)),
+    ...rows.map(([, agent, action, phase]) => chip(`${agent || ""} ${action || ""}`, phase || "")),
   );
 }
 
-function finishStep(code) {
+function finishStep(code: number): void {
   if (!currentStep) return;
   const summary = summarizeStep(currentStep.command, currentStep.raw, code ?? 1);
   currentStep.item.dataset.status = summary.status;
@@ -243,7 +278,7 @@ function finishStep(code) {
   currentStep = null;
 }
 
-function renderSummary(summary) {
+function renderSummary(summary: StepSummary): DocumentFragment {
   const fragment = document.createDocumentFragment();
 
   if (summary.metrics.length > 0) {
@@ -270,7 +305,7 @@ function renderSummary(summary) {
   } else if (summary.assertions.length > 0) {
     const list = document.createElement("div");
     list.className = "assertion-list";
-    summary.assertions.forEach((label) => list.append(chip(label, "ok")));
+    summary.assertions.forEach((label: string) => list.append(chip(label, "ok")));
     fragment.append(list);
   } else if (summary.note) {
     const note = document.createElement("p");
@@ -282,7 +317,7 @@ function renderSummary(summary) {
   return fragment;
 }
 
-function renderRows(summary) {
+function renderRows(summary: StepSummary): HTMLElement | Text {
   if (summary.kind === "actions") {
     return table(["Agent", "Action", "Phase"], summary.rows, (row) => [
       row.agent,
@@ -339,7 +374,7 @@ function renderRows(summary) {
   return document.createTextNode("");
 }
 
-function table(headers, rows, mapRow) {
+function table(headers: string[], rows: Record<string, string>[], mapRow: (row: Record<string, string>) => string[]): HTMLTableElement {
   const tableEl = document.createElement("table");
   const thead = document.createElement("thead");
   const tbody = document.createElement("tbody");
@@ -357,7 +392,7 @@ function table(headers, rows, mapRow) {
   return tableEl;
 }
 
-function chip(text, kind) {
+function chip(text: string, kind: string): HTMLSpanElement {
   const span = document.createElement("span");
   span.className = "chip";
   span.dataset.kind = kind;
@@ -365,9 +400,9 @@ function chip(text, kind) {
   return span;
 }
 
-function escapeHtml(value) {
+function escapeHtml(value: unknown): string {
   return String(value).replace(/[&<>"']/g, (char) => {
-    const replacements = {
+    const replacements: Record<string, string> = {
       "&": "&amp;",
       "<": "&lt;",
       ">": "&gt;",
@@ -378,8 +413,8 @@ function escapeHtml(value) {
   });
 }
 
-function labelForAction(action) {
-  const labels = {
+function labelForAction(action: string): string {
+  const labels: Record<string, string> = {
     start: "Start",
     day: "Day",
     publicLog: "Public Log",
@@ -396,7 +431,7 @@ function labelForAction(action) {
   return labels[action] || action;
 }
 
-async function runAction(action) {
+async function runAction(action: string): Promise<void> {
   if (running) return;
 
   const payload = { action, ...settings() };
@@ -414,7 +449,7 @@ async function runAction(action) {
       body: JSON.stringify(payload),
     });
   } catch (error) {
-    appendRawLine(error.message, "line-error");
+    appendRawLine(errorMessage(error), "line-error");
     setStatus("Error", "error");
     setRunning(false);
     markRunCard(runCard, false);
@@ -422,14 +457,21 @@ async function runAction(action) {
   }
 
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    appendRawLine(payload.error || `HTTP ${response.status}`, "line-error");
+    const payload = asRecord(await response.json().catch(() => ({})));
+    appendRawLine(stringValue(payload.error) || `HTTP ${response.status}`, "line-error");
     setStatus("Error", "error");
     setRunning(false);
     markRunCard(runCard, false);
     return;
   }
 
+  if (!response.body) {
+    appendRawLine("empty response body", "line-error");
+    setStatus("Error", "error");
+    setRunning(false);
+    markRunCard(runCard, false);
+    return;
+  }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -444,23 +486,27 @@ async function runAction(action) {
 
     for (const line of lines) {
       if (!line) continue;
-      const event = JSON.parse(line);
+      const event = asRecord(JSON.parse(line));
       if (event.type === "step") {
-        appendRawLine(`$ ${event.command}`, "line-command");
-        startStep(event.command);
+        const command = stringValue(event.command);
+        appendRawLine(`$ ${command}`, "line-command");
+        startStep(command);
       } else if (event.type === "stdout") {
-        appendRaw(event.data);
-        collectOutput(event.data);
+        const data = stringValue(event.data);
+        appendRaw(data);
+        collectOutput(data);
       } else if (event.type === "stderr") {
-        appendRaw(event.data, "line-error");
-        collectOutput(event.data);
+        const data = stringValue(event.data);
+        appendRaw(data, "line-error");
+        collectOutput(data);
       } else if (event.type === "exit") {
-        if (event.code !== 0) appendRawLine(`exit ${event.code}`, "line-error");
-        finishStep(event.code);
+        const code = Number(event.code);
+        if (code !== 0) appendRawLine(`exit ${code}`, "line-error");
+        finishStep(code);
       } else if (event.type === "done") {
-        ok = event.ok;
+        ok = event.ok === true;
       } else if (event.type === "error") {
-        appendRawLine(event.message, "line-error");
+        appendRawLine(stringValue(event.message), "line-error");
       }
     }
   }
@@ -471,13 +517,14 @@ async function runAction(action) {
   setRunning(false);
 }
 
-function markRunCard(card, ok) {
-  const pill = card.querySelector(".pill");
+function markRunCard(card: HTMLElement, ok: boolean): void {
+  const pill = card.querySelector<HTMLElement>(".pill");
+  if (!pill) return;
   pill.textContent = ok ? "Done" : "Failed";
   pill.dataset.kind = ok ? "done" : "error";
 }
 
-async function discoverModels() {
+async function discoverModels(): Promise<void> {
   if (running) return;
   setRunning(true);
   setStatus("Checking", "running");
@@ -492,28 +539,29 @@ async function discoverModels() {
         apiKey: apiKey.value,
       }),
     });
-    const payload = await response.json();
+    const payload = asRecord(await response.json());
     if (!response.ok) {
       throw new Error(`${payload.error}${payload.body ? `: ${payload.body}` : ""}`);
     }
     appendRawLine(`models endpoint: ${payload.url}`, "line-command");
-    if (payload.models.length === 0) {
+    const models = Array.isArray(payload.models) ? payload.models.map(stringValue).filter(Boolean) : [];
+    if (models.length === 0) {
       appendRawLine("no models returned", "line-error");
       setStatus("No Models", "error");
       return;
     }
-    model.value = payload.models[0];
-    payload.models.forEach((id) => appendRawLine(id));
+    model.value = models[0] || "";
+    models.forEach((id: string) => appendRawLine(id));
     setStatus("Done");
   } catch (error) {
-    appendRawLine(error.message, "line-error");
+    appendRawLine(errorMessage(error), "line-error");
     setStatus("Error", "error");
   } finally {
     setRunning(false);
   }
 }
 
-async function downloadGame() {
+async function downloadGame(): Promise<void> {
   if (running) return;
   setRunning(true);
   setStatus("Exporting", "running");
@@ -525,9 +573,9 @@ async function downloadGame() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(settings()),
     });
-    const payload = await response.json();
+    const payload = asRecord(await response.json());
     if (!response.ok) {
-      throw new Error(payload.error || `HTTP ${response.status}`);
+      throw new Error(stringValue(payload.error) || `HTTP ${response.status}`);
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -545,13 +593,14 @@ async function downloadGame() {
     URL.revokeObjectURL(url);
 
     appendRawLine(`downloaded ${filename}`, "line-command");
-    if (payload.export_errors?.length) {
-      appendRawLine(`export completed with ${payload.export_errors.length} query warning(s)`);
+    const exportErrors = Array.isArray(payload.export_errors) ? payload.export_errors : [];
+    if (exportErrors.length) {
+      appendRawLine(`export completed with ${exportErrors.length} query warning(s)`);
     }
     setStatus("Done");
     activeCommand.textContent = "Game downloaded";
   } catch (error) {
-    appendRawLine(error.message, "line-error");
+    appendRawLine(errorMessage(error), "line-error");
     setStatus("Error", "error");
     activeCommand.textContent = "Download failed";
   } finally {
@@ -571,7 +620,7 @@ clearButton.addEventListener("click", () => {
   activeCommand.textContent = "No command running";
 });
 buttons.forEach((button) => {
-  button.addEventListener("click", () => runAction(button.dataset.action));
+  button.addEventListener("click", () => runAction(button.dataset.action || ""));
 });
 
 appendRawLine("Ready.");

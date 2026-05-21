@@ -218,7 +218,7 @@ Useful make targets:
 ```text
 make web        Start the browser runner on http://localhost:5174
 make web-dev    Start the browser runner with file watching and browser reload
-make web-test   Run the orchestrator unit checks (tests/lab-web.mjs)
+make web-test   Run the orchestrator unit checks (tests/lab-web.ts)
 make eval-test  Run the eval framework unit checks
 make eval-run PROFILE=eval/profiles/<name>.json  Run a batch eval profile
 make eval-report Compare eval/runs into Markdown and JSON
@@ -239,7 +239,7 @@ make down       Stop the generated lab
 
 Research-grade eval details live in `docs/research-eval-plan.md`. The local
 `omlx` path remains the default: run a profile with `make eval-mini` or
-`make eval-run PROFILE=...`, then use `eval/report.mjs` to compare scorecards.
+`make eval-run PROFILE=...`, then use `eval/report.ts` to compare scorecards.
 Each run directory contains `manifest.json`, `scorecard.json`, `gates.json`, and
 copied durable game logs.
 
@@ -278,7 +278,7 @@ bin/        user-callable entry points (labctl, web servers, smoke runner)
 container/  scripts that run INSIDE Docker player / gateway containers
 lib/        importable modules (orchestrator helpers, lab-span, mint-token,
             generate-compose)
-eval/       eval framework (aggregate.mjs, run.mjs, profiles/)
+eval/       eval framework (aggregate.ts, run.ts, profiles/)
 tests/      every test suite
 sql/        DuckDB SQL fragments (player init, gateway init, scopes)
 web/        browser runner static assets

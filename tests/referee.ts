@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Tests for the extracted referee module (lib/referee.mjs).
+// Tests for the extracted referee module (lib/referee.ts).
 //
 // We cannot drive the real autoGame here without Docker, so these tests
 // focus on the surface that the extraction introduced:
@@ -21,11 +21,13 @@ import {
   stdoutSink,
   stripAnsi,
   winnerFor,
-} from "../lib/referee.mjs";
+} from "../lib/referee.ts";
+
+type JsonRecord = Record<string, unknown>;
 
 // === sinks ===
 {
-  const events = [];
+  const events: JsonRecord[] = [];
   const sink = arraySink(events);
   sink.write("step", { command: "echo" });
   sink.write("stdout", { data: "hi" });
@@ -45,25 +47,25 @@ import {
 }
 {
   // httpSink writes NDJSON to a mock response object
-  const lines = [];
-  const fakeRes = { write: (chunk) => lines.push(chunk) };
+  const lines: string[] = [];
+  const fakeRes = { write: (chunk: string): number => lines.push(chunk) };
   const sink = httpSink(fakeRes);
   sink.write("stdout", { data: "abc" });
   sink.write("done", { ok: true });
   assert.equal(lines.length, 2);
-  assert.deepEqual(JSON.parse(lines[0]), { type: "stdout", data: "abc" });
-  assert.deepEqual(JSON.parse(lines[1]), { type: "done", ok: true });
+  assert.deepEqual(JSON.parse(lines[0] || ""), { type: "stdout", data: "abc" });
+  assert.deepEqual(JSON.parse(lines[1] || ""), { type: "done", ok: true });
   // each line ends with newline
-  assert.ok(lines[0].endsWith("\n"));
+  assert.ok(lines[0]?.endsWith("\n"));
 }
 {
   // stdoutSink writes to an injected stream (same shape as httpSink)
-  const chunks = [];
-  const stream = { write: (s) => chunks.push(s) };
+  const chunks: string[] = [];
+  const stream = { write: (s: string): number => chunks.push(s) };
   const sink = stdoutSink(stream);
   sink.write("start", { provider: "stub" });
   assert.equal(chunks.length, 1);
-  assert.deepEqual(JSON.parse(chunks[0]), { type: "start", provider: "stub" });
+  assert.deepEqual(JSON.parse(chunks[0] || ""), { type: "start", provider: "stub" });
 }
 
 // === winnerFor ===
@@ -88,7 +90,7 @@ import {
   // 2 wolves vs 3 town -> still going
   assert.equal(winnerFor(["a", "b", "c", "d", "e"], roles), null);
   // empty roster -> village (no wolves; vacuously)
-  assert.equal(winnerFor([], roles).winner, "village");
+  assert.equal(winnerFor([], roles)?.winner, "village");
 }
 
 // === clampInt ===

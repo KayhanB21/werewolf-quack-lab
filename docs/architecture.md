@@ -20,13 +20,13 @@ browser runner
   GET /api/dev-events for hot reload when LAB_WEB_DEV=1
 
 lab web server
-  bin/lab-web-server.mjs
+  bin/lab-web-server.ts
   writes runtime config
   streams command output as NDJSON
   runs the lightweight referee for Play Game
 
 dev runner
-  bin/lab-web-dev.mjs
+  bin/lab-web-dev.ts
   polls lab source files
   restarts the web server on change
   lets the browser reload after the dev event stream reconnects
@@ -161,8 +161,8 @@ use the container-side base URL.
 
 ## Browser Runner And Referee
 
-`make web` starts `bin/lab-web-server.mjs` at `http://localhost:5174`.
-`make web-dev` starts `bin/lab-web-dev.mjs`, which polls the lab source tree,
+`make web` starts `bin/lab-web-server.ts` at `http://localhost:5174`.
+`make web-dev` starts `bin/lab-web-dev.ts`, which polls the lab source tree,
 restarts the web server on changes, and enables a tiny browser reload hook through
 `/api/dev-events`.
 
@@ -276,19 +276,19 @@ authorization callback can consult.
 ## Repository Layout
 
 ```
-bin/        user-callable entry points (labctl, lab-web-server.mjs,
-            lab-web-dev.mjs, smoke-test.sh, omlx-smoke-test.sh)
+bin/        user-callable entry points (labctl, lab-web-server.ts,
+            lab-web-dev.ts, smoke-test.sh, omlx-smoke-test.sh)
 container/  scripts that run INSIDE Docker player and gateway containers
             (agent-act.sh, player-node.sh, gateway-query.sh,
              gateway-smoke-test.sh)
 lib/        importable / sourceable modules
-            (lab-web-actions.mjs, lab-span.sh, mint-token.sh,
+            (lab-web-actions.ts, lab-span.sh, mint-token.sh,
              generate-compose.sh)
-eval/       eval framework (aggregate.mjs, gates.mjs, run.mjs,
+eval/       eval framework (aggregate.ts, gates.ts, run.ts,
             profiles/, baselines/, fixtures/, runs/)
 tests/      every test suite (agent-act.sh, mint-token.sh, lab-authz.sh,
-            lab-span.sh, generated-compose.sh, lab-web.mjs,
-            eval-aggregate.mjs, eval-run.mjs)
+            lab-span.sh, generated-compose.sh, lab-web.ts,
+            eval-aggregate.ts, eval-run.ts)
 ```
 
 In the container image, `container/` and `lib/` are copied to
@@ -298,26 +298,26 @@ container paths.
 
 ## Eval Framework
 
-`eval/aggregate.mjs` consumes `.generated/games/<id>.jsonl` durable logs
+`eval/aggregate.ts` consumes `.generated/games/<id>.jsonl` durable logs
 and emits a scorecard with four sections: `prompt_following`, `game_shape`,
-`belief_quality`, `performance`. `eval/run.mjs` drives N games via
+`belief_quality`, `performance`. `eval/run.ts` drives N games via
 `/api/run`, collects each game's durable log into
 `eval/runs/<profile>-<stamp>/`, and writes the aggregated `scorecard.json`.
 
 Each agent invocation emits a per-turn `__TURN_STATS__ <json>` marker line
-on stdout. The orchestrator (`bin/lab-web-server.mjs`) parses these via
-`parseTurnStatsMarkers` in `lib/lab-web-actions.mjs` and appends them as
+on stdout. The orchestrator (`bin/lab-web-server.ts`) parses these via
+`parseTurnStatsMarkers` in `lib/lab-web-actions.ts` and appends them as
 `turn-stats` events in the durable log. Captured per turn: parse path
 (`stub` / `object` / `text` / `http-error`), JSON validity, action
 legality for the phase, finish reason, prompt / completion / reasoning
 token counts, wall-clock latency, suspicion / knowledge counts, and a
 truncated `reasoning_content`.
 
-`eval/gates.mjs` defines hard and soft regression gates. `eval/run.mjs`
+`eval/gates.ts` defines hard and soft regression gates. `eval/run.ts`
 evaluates them after aggregation and exits non-zero on hard failure;
 each profile can override defaults under a `gates` block (or set
 `skip: true`). Committed JSONL fixtures live under `eval/fixtures/`
-and the `tests/eval-aggregate.mjs` suite asserts that the aggregator
+and the `tests/eval-aggregate.ts` suite asserts that the aggregator
 output for those fixtures matches `eval/baselines/fixtures.json`.
 
 See `docs/eval-plan.md` for the metric taxonomy, prior-art survey, and

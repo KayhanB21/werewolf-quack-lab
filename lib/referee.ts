@@ -1,6 +1,6 @@
 // Werewolf Quack Lab referee / orchestrator.
 //
-// Pulled out of bin/lab-web-server.mjs so the game loop can be driven from
+// Pulled out of bin/lab-web-server.ts so the game loop can be driven from
 // either the HTTP server (NDJSON streaming sink) or a CLI (stdout NDJSON
 // sink). Same code path, same durable log, same exit semantics — only the
 // sink differs.
@@ -10,7 +10,7 @@
 // HTTP sink writes to res. CLI sink writes to stdout. Mock sinks (in tests)
 // can collect events into an array. The contract is intentionally tiny.
 
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,8 +27,10 @@ import {
   resolveLynch,
   resolveNightOutcome,
   serializeRefereeEvent,
-} from "./lab-web-actions.mjs";
-import { extractJsonArrays } from "../web/flow.mjs";
+  type LabEnv,
+  type LabInput,
+} from "./lab-web-actions.ts";
+import { extractJsonArrays } from "../web/flow.ts";
 
 export const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const GENERATED_DIR = path.join(ROOT_DIR, ".generated");
@@ -38,9 +40,30 @@ const GENERATED_DIR = path.join(ROOT_DIR, ".generated");
 // can reach every child the orchestrator spawned, even ones started inside
 // runAutoGame.
 // ===========================================================================
-const activeChildren = new Set();
+type JsonRecord = Record<string, unknown>;
+type Row = JsonRecord & {
+  agent_id?: string;
+  action?: string;
+  target?: string;
+  round?: number | string;
+  rationale?: string;
+  public_text?: string;
+};
+export type Sink = { write(type: string, payload?: JsonRecord): void };
+export type AbortControl = { onAbort: (() => void) | null };
+type RunResult = { code: number; stdout: string; stderr: string };
 
-export function registerChild(child) {
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+const activeChildren = new Set<ChildProcess>();
+
+export function registerChild(child: ChildProcess): ChildProcess {
   activeChildren.add(child);
   child.on("close", () => {
     activeChildren.delete(child);
@@ -48,13 +71,13 @@ export function registerChild(child) {
   return child;
 }
 
-export function killActiveChildren() {
+export function killActiveChildren(): void {
   for (const child of activeChildren) {
     if (!child.killed) child.kill("SIGTERM");
   }
 }
 
-export function stripAnsi(text) {
+export function stripAnsi(text: unknown): string {
   return String(text).replace(/\[[0-9;]*m/g, "");
 }
 
@@ -63,17 +86,17 @@ export function stripAnsi(text) {
 // ===========================================================================
 
 // A null sink — useful for tests that don't care about event emission.
-export function nullSink() {
+export function nullSink(): Sink {
   return { write() {} };
 }
 
 // Collect every event into an array. Test convenience.
-export function arraySink(target) {
+export function arraySink(target: JsonRecord[]): Sink {
   return { write: (type, payload = {}) => target.push({ type, ...payload }) };
 }
 
 // Adapt a Node http response into a sink. Each event becomes one NDJSON line.
-export function httpSink(res) {
+export function httpSink(res: { write(chunk: string): unknown }): Sink {
   return {
     write(type, payload = {}) {
       res.write(`${JSON.stringify({ type, ...payload })}\n`);
@@ -82,7 +105,7 @@ export function httpSink(res) {
 }
 
 // Adapt stdout into a sink (used by the CLI entry).
-export function stdoutSink(stream = process.stdout) {
+export function stdoutSink(stream: { write(chunk: string): unknown } = process.stdout): Sink {
   return {
     write(type, payload = {}) {
       stream.write(`${JSON.stringify({ type, ...payload })}\n`);
@@ -95,7 +118,7 @@ export function stdoutSink(stream = process.stdout) {
 // stop callback while the child is alive so external code can SIGTERM it.
 // ===========================================================================
 
-export async function runStep(command, args, env, sink, shouldAbort) {
+export async function runStep(command: string, args: string[], env: LabEnv, sink: Sink, shouldAbort?: AbortControl): Promise<number> {
   sink.write("step", { command: [command, ...args].join(" ") });
   return new Promise((resolve) => {
     const child = registerChild(spawn(command, args, {
@@ -108,10 +131,10 @@ export async function runStep(command, args, env, sink, shouldAbort) {
     };
     if (shouldAbort) shouldAbort.onAbort = stop;
 
-    child.stdout.on("data", (chunk) => {
+    child.stdout?.on("data", (chunk: Buffer) => {
       sink.write("stdout", { data: stripAnsi(chunk.toString("utf8")) });
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr?.on("data", (chunk: Buffer) => {
       sink.write("stderr", { data: stripAnsi(chunk.toString("utf8")) });
     });
     child.on("error", (error) => {
@@ -126,7 +149,7 @@ export async function runStep(command, args, env, sink, shouldAbort) {
   });
 }
 
-export async function runStepCapture(command, args, env, sink, shouldAbort) {
+export async function runStepCapture(command: string, args: string[], env: LabEnv, sink: Sink, shouldAbort?: AbortControl): Promise<RunResult> {
   sink.write("step", { command: [command, ...args].join(" ") });
   return new Promise((resolve) => {
     const child = registerChild(spawn(command, args, {
@@ -141,19 +164,19 @@ export async function runStepCapture(command, args, env, sink, shouldAbort) {
     };
     if (shouldAbort) shouldAbort.onAbort = stop;
 
-    child.stdout.on("data", (chunk) => {
+    child.stdout?.on("data", (chunk: Buffer) => {
       const data = stripAnsi(chunk.toString("utf8"));
       stdout += data;
       sink.write("stdout", { data });
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr?.on("data", (chunk: Buffer) => {
       const data = stripAnsi(chunk.toString("utf8"));
       stderr += data;
       sink.write("stderr", { data });
     });
     child.on("error", (error) => {
-      stderr += error.message;
-      sink.write("error", { message: error.message });
+      stderr += errorMessage(error);
+      sink.write("error", { message: errorMessage(error) });
       resolve({ code: 1, stdout, stderr });
     });
     child.on("close", (code, signal) => {
@@ -164,7 +187,7 @@ export async function runStepCapture(command, args, env, sink, shouldAbort) {
   });
 }
 
-export async function runBufferedStep(command, args, env) {
+export async function runBufferedStep(command: string, args: string[], env: LabEnv): Promise<RunResult> {
   return new Promise((resolve) => {
     const child = registerChild(spawn(command, args, {
       cwd: ROOT_DIR,
@@ -173,14 +196,14 @@ export async function runBufferedStep(command, args, env) {
     }));
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (chunk) => {
+    child.stdout?.on("data", (chunk: Buffer) => {
       stdout += stripAnsi(chunk.toString("utf8"));
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr?.on("data", (chunk: Buffer) => {
       stderr += stripAnsi(chunk.toString("utf8"));
     });
     child.on("error", (error) => {
-      stderr += error.message;
+      stderr += errorMessage(error);
       resolve({ code: 1, stdout, stderr });
     });
     child.on("close", (code) => {
@@ -194,21 +217,29 @@ export async function runBufferedStep(command, args, env) {
 // query output is the "interesting" one.
 // ===========================================================================
 
-export function pickRows(raw, queryName) {
-  const arrays = extractJsonArrays(raw).filter((value) => Array.isArray(value));
-  const predicates = {
-    whoami: (row) => row.name,
-    public_log: (row) => row.public_text,
-    wolf_channel: (row) => row.action === "wolf-kill" || row.action === "wolf-done" || row.rationale,
-    seer_channel: (row) => row.action === "seer-investigate" || row.rationale,
-    doctor_channel: (row) => row.action === "doctor-save" || row.rationale,
-    full_log: (row) => row.public_text || row.rationale,
-  };
-  const predicate = predicates[queryName] || (() => true);
+export function pickRows(raw: string, queryName: string): Row[] {
+  const arrays = extractJsonArrays(raw)
+    .filter(Array.isArray)
+    .map((rows) => rows.filter(isRecord) as Row[]);
+  const predicates: Record<string, (row: Row) => unknown> = {
+    whoami: (row: Row) => row.name,
+    public_log: (row: Row) => row.public_text,
+    wolf_channel: (row: Row) => row.action === "wolf-kill" || row.action === "wolf-done" || row.rationale,
+    seer_channel: (row: Row) => row.action === "seer-investigate" || row.rationale,
+    doctor_channel: (row: Row) => row.action === "doctor-save" || row.rationale,
+    full_log: (row: Row) => row.public_text || row.rationale,
+  } satisfies Record<string, (row: Row) => unknown>;
+  const predicate = predicates[queryName] ?? (() => true);
   return arrays.find((rows) => rows.some((row) => row && typeof row === "object" && predicate(row))) || [];
 }
 
-export async function runFilteredQuery(command, queryName, env, sink, predicate) {
+export async function runFilteredQuery(
+  command: string,
+  queryName: string,
+  env: LabEnv,
+  sink: Sink,
+  predicate: (row: Row) => boolean,
+): Promise<{ code: number; rows: Row[] }> {
   sink.write("step", { command });
   const result = await runBufferedStep("./bin/labctl", ["query", queryName], env);
 
@@ -228,7 +259,7 @@ export async function runFilteredQuery(command, queryName, env, sink, predicate)
 // Win condition.
 // ===========================================================================
 
-export function winnerFor(alive, roles) {
+export function winnerFor(alive: string[], roles: Map<string, string>): { winner: string; reason: string } | null {
   const wolves = alive.filter((id) => roles.get(id) === "wolf").length;
   const town = alive.length - wolves;
   if (wolves === 0) {
@@ -240,7 +271,7 @@ export function winnerFor(alive, roles) {
   return null;
 }
 
-export function clampInt(value, fallback, min, max) {
+export function clampInt(value: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, Math.trunc(parsed)));
@@ -253,16 +284,16 @@ export function clampInt(value, fallback, min, max) {
 // ===========================================================================
 
 export async function runAgentPhase(
-  command,
-  ids,
-  phase,
-  envOrFn,
-  sink,
-  shouldAbort,
-  isClosed,
-  beliefsByAgent,
-  logEvent,
-) {
+  command: string,
+  ids: string[],
+  phase: string,
+  envOrFn: LabEnv | ((id: string) => LabEnv),
+  sink: Sink,
+  shouldAbort: AbortControl,
+  isClosed?: () => boolean,
+  beliefsByAgent?: Map<string, { suspicions: JsonRecord[]; knowledge: JsonRecord[] }>,
+  logEvent?: (event: JsonRecord) => Promise<void>,
+): Promise<boolean> {
   sink.write("step", { command });
   const getEnv = typeof envOrFn === "function" ? envOrFn : () => envOrFn;
 
@@ -322,18 +353,23 @@ export async function runAgentPhase(
 // code: 0 on success so downstream consumers see a clean end of stream.
 // ===========================================================================
 
-export async function runAutoGame(body, env, sink, controls = {}) {
+export async function runAutoGame(
+  body: LabInput,
+  env: LabEnv,
+  sink: Sink,
+  controls: { shouldAbort?: AbortControl; isClosed?: () => boolean } = {},
+): Promise<boolean> {
   const shouldAbort = controls.shouldAbort ?? { onAbort: null };
   const isClosed = controls.isClosed ?? (() => false);
 
   const gameConfig = buildGameConfig(body);
   const players = gameConfig.players;
   const roles = new Map(players.map((player) => [player.id, player.role]));
-  const history = [];
-  const eliminated = [];
-  const publicLog = [];
-  const publicEvents = [];
-  const privateNotesByAgent = new Map(players.map((player) => [player.id, []]));
+  const history: JsonRecord[] = [];
+  const eliminated: Array<{ id: string; role: string; round: number; phase: string; cause: string }> = [];
+  const publicLog: Row[] = [];
+  const publicEvents: string[] = [];
+  const privateNotesByAgent = new Map<string, unknown[]>(players.map((player) => [player.id, []]));
   const beliefsByAgent = new Map(
     players.map((player) => [player.id, { suspicions: [], knowledge: [] }]),
   );
@@ -347,12 +383,12 @@ export async function runAutoGame(body, env, sink, controls = {}) {
   const gamesDir = path.join(GENERATED_DIR, "games");
   const logPath = path.join(gamesDir, `${gameId}.jsonl`);
   await mkdir(gamesDir, { recursive: true });
-  const logEvent = async (event) => {
+  const logEvent = async (event: JsonRecord) => {
     try {
       await appendFile(logPath, serializeRefereeEvent(event));
     } catch (error) {
       sink.write("stderr", {
-        data: `[referee] failed to append durable log: ${error.message}\n`,
+        data: `[referee] failed to append durable log: ${errorMessage(error)}\n`,
       });
     }
   };
@@ -366,8 +402,8 @@ export async function runAutoGame(body, env, sink, controls = {}) {
   });
   sink.write("stdout", { data: `[referee] durable log: ${path.relative(ROOT_DIR, logPath)}\n` });
 
-  function envForId(phase, round, base, extra = {}) {
-    return (id) => ({
+  function envForId(phase: string, round: number, base: LabEnv, extra: Partial<LabEnv> = {}) {
+    return (id: string): LabEnv => ({
       ...base,
       ...extra,
       ACTIVE_PLAYER_IDS: alive.join(","),
@@ -386,10 +422,11 @@ export async function runAutoGame(body, env, sink, controls = {}) {
     });
   }
 
-  for (const [command, args] of [
+  const setupSteps: Array<[string, string[]]> = [
     ["./bin/labctl", ["down"]],
     ["./bin/labctl", ["up"]],
-  ]) {
+  ];
+  for (const [command, args] of setupSteps) {
     if (isClosed()) return false;
     const result = await runStep(command, args, env, sink, shouldAbort);
     if (result !== 0) return false;
@@ -423,7 +460,7 @@ export async function runAutoGame(body, env, sink, controls = {}) {
       (row) =>
         Number(row.round) === round &&
         row.action !== "vote" &&
-        alive.includes(row.agent_id),
+        alive.includes(String(row.agent_id || "")),
     );
     if (discussionLog.code !== 0) return false;
     publicLog.push(...discussionLog.rows);
@@ -455,46 +492,47 @@ export async function runAutoGame(body, env, sink, controls = {}) {
       (row) =>
         Number(row.round) === round &&
         row.action === "vote" &&
-        alive.includes(row.agent_id) &&
-        alive.includes(row.target),
+        alive.includes(String(row.agent_id || "")) &&
+        alive.includes(String(row.target || "")),
     );
     if (dayLog.code !== 0) return false;
     publicLog.push(...dayLog.rows);
 
     const lynch = resolveLynch(dayLog.rows);
     if (lynch.outcome === "lynch") {
-      alive = alive.filter((id) => id !== lynch.target);
-      const revealedRole = roles.get(lynch.target) || "unknown";
+      const target = lynch.target;
+      alive = alive.filter((id) => id !== target);
+      const revealedRole = roles.get(target) || "unknown";
       eliminated.push({
-        id: lynch.target,
+        id: target,
         role: revealedRole,
         round,
         phase: "day",
         cause: "lynch",
       });
-      const announcement = `Round ${round}: ${lynch.target} was lynched (${lynch.votes} vote(s)). Revealed role: ${revealedRole}.`;
+      const announcement = `Round ${round}: ${target} was lynched (${lynch.votes} vote(s)). Revealed role: ${revealedRole}.`;
       publicEvents.push(announcement);
       await runBufferedStep(
         "./bin/labctl",
-        ["ref-reveal", lynch.target, String(round), announcement],
+        ["ref-reveal", target, String(round), announcement],
         roundEnv,
       );
       await runBufferedStep(
         "./bin/labctl",
-        ["ref-elim", lynch.target, String(round), revealedRole, "lynch"],
+        ["ref-elim", target, String(round), revealedRole, "lynch"],
         roundEnv,
       );
       history.push({
         round,
         phase: "day",
         event: "vote",
-        target: lynch.target,
+        target,
         votes: lynch.votes,
       });
       await logEvent({
         kind: "lynch",
         round,
-        target: lynch.target,
+        target,
         votes: lynch.votes,
         revealed_role: revealedRole,
       });
@@ -520,7 +558,7 @@ export async function runAutoGame(body, env, sink, controls = {}) {
     }
 
     const liveWolves = alive.filter((id) => roles.get(id) === "wolf");
-    const wolfRotationRows = [];
+    const wolfRotationRows: Row[] = [];
     let wolfConsensusRotation = wolfRotationCap;
     let wolfConsensusReached = false;
     for (let rotation = 1; rotation <= wolfRotationCap; rotation += 1) {
@@ -548,8 +586,8 @@ export async function runAutoGame(body, env, sink, controls = {}) {
         (row) =>
           Number(row.round) === round &&
           (row.action === "wolf-kill" || row.action === "wolf-done") &&
-          alive.includes(row.agent_id) &&
-          alive.includes(row.target),
+          alive.includes(String(row.agent_id || "")) &&
+          alive.includes(String(row.target || "")),
       );
       if (rotationLog.code !== 0) return false;
       wolfRotationRows.splice(0, wolfRotationRows.length, ...rotationLog.rows);
@@ -599,8 +637,8 @@ export async function runAutoGame(body, env, sink, controls = {}) {
       (row) =>
         Number(row.round) === round &&
         row.action === "doctor-save" &&
-        alive.includes(row.agent_id) &&
-        alive.includes(row.target),
+        alive.includes(String(row.agent_id || "")) &&
+        alive.includes(String(row.target || "")),
     );
     if (doctorLog.code !== 0) return false;
 
@@ -626,45 +664,46 @@ export async function runAutoGame(body, env, sink, controls = {}) {
       (row) =>
         Number(row.round) === round &&
         row.action === "seer-investigate" &&
-        alive.includes(row.agent_id) &&
-        alive.includes(row.target),
+        alive.includes(String(row.agent_id || "")) &&
+        alive.includes(String(row.target || "")),
     );
     if (seerLog.code !== 0) return false;
 
     const night = resolveNightOutcome(wolfLog.rows, doctorLog.rows);
     if (night.outcome === "kill") {
-      alive = alive.filter((id) => id !== night.target);
-      const revealedRole = roles.get(night.target) || "unknown";
+      const target = night.target;
+      alive = alive.filter((id) => id !== target);
+      const revealedRole = roles.get(target) || "unknown";
       eliminated.push({
-        id: night.target,
+        id: target,
         role: revealedRole,
         round,
         phase: "wolf",
         cause: "wolf-kill",
       });
-      const announcement = `Round ${round}: ${night.target} was killed by wolves. Revealed role: ${revealedRole}.`;
+      const announcement = `Round ${round}: ${target} was killed by wolves. Revealed role: ${revealedRole}.`;
       publicEvents.push(announcement);
       await runBufferedStep(
         "./bin/labctl",
-        ["ref-reveal", night.target, String(round), announcement],
+        ["ref-reveal", target, String(round), announcement],
         roundEnv,
       );
       await runBufferedStep(
         "./bin/labctl",
-        ["ref-elim", night.target, String(round), revealedRole, "wolf-kill"],
+        ["ref-elim", target, String(round), revealedRole, "wolf-kill"],
         roundEnv,
       );
       history.push({
         round,
         phase: "wolf",
         event: "kill",
-        target: night.target,
+        target,
         votes: night.votes,
       });
       await logEvent({
         kind: "wolf-kill",
         round,
-        target: night.target,
+        target,
         votes: night.votes,
         revealed_role: revealedRole,
       });
@@ -700,7 +739,7 @@ export async function runAutoGame(body, env, sink, controls = {}) {
       const proposals = seerLog.rows.filter((row) => row.agent_id === seer);
       const proposal = proposals[proposals.length - 1];
       if (!proposal || !proposal.target) continue;
-      const targetRole = roles.get(proposal.target);
+      const targetRole = roles.get(String(proposal.target));
       if (!targetRole) continue;
       const note = `Round ${round}: ${proposal.target} is ${targetRole}.`;
       const writeResult = await runBufferedStep(
@@ -753,7 +792,7 @@ export async function runAutoGame(body, env, sink, controls = {}) {
   const result = {
     winner,
     reason,
-    rounds: history.reduce((value, item) => Math.max(value, item.round || 0), 0),
+    rounds: history.reduce((value, item) => Math.max(value, Number(item.round) || 0), 0),
     alive,
     eliminated,
     history,

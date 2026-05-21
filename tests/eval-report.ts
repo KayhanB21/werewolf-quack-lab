@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bootstrapBinaryCi, buildReport, discoverRuns, formatMarkdown } from "../eval/report.mjs";
+import { bootstrapBinaryCi, buildReport, discoverRuns, formatMarkdown } from "../eval/report.ts";
 
 const ci = bootstrapBinaryCi([1, 0, 1, 1], { iterations: 20, seed: 1 });
 assert.equal(ci.n, 4);
