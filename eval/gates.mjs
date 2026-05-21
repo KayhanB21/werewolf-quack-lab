@@ -26,8 +26,19 @@ export const DEFAULT_GATES = Object.freeze({
   skip: false,
 });
 
-function resolveGates(profileGates) {
-  return { ...DEFAULT_GATES, ...(profileGates || {}) };
+// Derive default soft bands from a committed baseline scorecard.
+// Tolerances mirror the eval-plan: ±0.20 for winrate, ±2 rounds, ±0.15 for
+// belief_emit. A profile.gates entry always wins over a derived band.
+export function deriveBandsFromBaseline(baseline) {
+  if (!baseline || typeof baseline !== "object") return {};
+  const out = {};
+  const village = baseline.game_shape?.village_winrate;
+  if (typeof village === "number") out.village_winrate_band = [village, 0.2];
+  const rounds = baseline.game_shape?.avg_rounds;
+  if (typeof rounds === "number") out.avg_rounds_band = [rounds, 2];
+  const belief = baseline.belief_quality?.belief_emit_rate;
+  if (typeof belief === "number") out.belief_emit_rate_min = Math.max(0, belief - 0.15);
+  return out;
 }
 
 function gte(actual, floor) {
@@ -44,8 +55,10 @@ function bandFailure(label, actual, band) {
   return { label, actual, expected: center, tolerance };
 }
 
-export function evaluateGates(scorecard, profileGates) {
-  const gates = resolveGates(profileGates);
+export function evaluateGates(scorecard, profileGates, opts = {}) {
+  const derived = opts.baseline ? deriveBandsFromBaseline(opts.baseline) : {};
+  // precedence: profile > derived-from-baseline > defaults
+  const gates = { ...DEFAULT_GATES, ...derived, ...(profileGates || {}) };
   if (gates.skip) {
     return { pass: true, skipped: true, hard_failures: [], soft_warnings: [], gates };
   }
@@ -129,16 +142,20 @@ const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
   const args = process.argv.slice(2);
   if (args.length === 0) {
-    console.error("usage: gates.mjs <scorecard.json> [--profile profile.json] [--out report.json]");
+    console.error(
+      "usage: gates.mjs <scorecard.json> [--profile profile.json] [--baseline baseline.json] [--out report.json]",
+    );
     process.exit(2);
   }
   const scorecardPath = args.find((a) => !a.startsWith("--"));
   const profileIdx = args.indexOf("--profile");
+  const baselineIdx = args.indexOf("--baseline");
   const outIdx = args.indexOf("--out");
 
   const scorecard = JSON.parse(await readFile(scorecardPath, "utf8"));
   const profile = profileIdx >= 0 ? JSON.parse(await readFile(args[profileIdx + 1], "utf8")) : {};
-  const report = evaluateGates(scorecard, profile.gates);
+  const baseline = baselineIdx >= 0 ? JSON.parse(await readFile(args[baselineIdx + 1], "utf8")) : null;
+  const report = evaluateGates(scorecard, profile.gates, { baseline });
 
   if (outIdx >= 0) {
     await writeFile(args[outIdx + 1], `${JSON.stringify(report, null, 2)}\n`);

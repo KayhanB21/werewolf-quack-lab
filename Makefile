@@ -1,4 +1,4 @@
-.PHONY: up down logs test web web-dev web-test eval-test eval-run eval-large whoami public wolf full denied shell
+.PHONY: up down logs test web web-dev web-test eval-test eval-run eval-large eval-mini eval-nothink eval-7p eval-hot eval-all-omlx baseline-refresh baseline-check whoami public wolf full denied shell
 
 up:
 	./bin/labctl up
@@ -32,6 +32,34 @@ eval-run:
 
 eval-large:
 	node ./eval/run.mjs ./eval/profiles/omlx-large.json
+
+eval-mini:
+	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-mini.json
+
+eval-nothink:
+	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-nothink.json
+
+eval-7p:
+	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-7p.json
+
+eval-hot:
+	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-hot.json
+
+# Run every omlx profile back-to-back. Each profile has its own gates;
+# the first failure short-circuits.
+eval-all-omlx:
+	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-mini.json
+	node ./eval/run.mjs ./eval/profiles/omlx-qwen35.json
+	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-nothink.json
+	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-7p.json
+	node ./eval/run.mjs ./eval/profiles/omlx-qwen35-hot.json
+	node ./eval/run.mjs ./eval/profiles/omlx-large.json
+
+baseline-refresh:
+	node ./eval/baseline-refresh.mjs
+
+baseline-check:
+	node ./eval/baseline-refresh.mjs --check
 
 whoami:
 	./bin/labctl query whoami

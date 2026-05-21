@@ -1,0 +1,26 @@
+{
+  "name": "omlx-qwen35-mini",
+  "description": "5-game minimal omlx smoke. 3 players (1 wolf, 1 seer, 1 doctor) is the smallest roster that still exercises every phase. Use this as the daily-driver check before running larger profiles. Gate floors match the live model's expected behavior.",
+  "provider": "omlx",
+  "model": "MLX-Qwen3.5-9B-DeepSeek-V4-Flash-4bit",
+  "base_url": "http://localhost:8000/v1",
+  "api_key_env": "OMLX_API_KEY",
+  "game_count": 5,
+  "concurrency": 1,
+  "max_rounds": 5,
+  "wolf_rotation_cap": 2,
+  "thinking_budget": 300,
+  "temperature": 0.1,
+  "max_tokens": 700,
+  "players": [
+    { "id": "p1", "role": "wolf" },
+    { "id": "p2", "role": "seer" },
+    { "id": "p3", "role": "doctor" }
+  ],
+  "gates": {
+    "valid_json_rate_min": 0.85,
+    "action_in_phase_rate_min": 0.95,
+    "http_error_rate_max": 0.05,
+    "incomplete_rate_max": 0.20
+  }
+}

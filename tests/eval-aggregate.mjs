@@ -181,6 +181,40 @@ try {
   await rm(tmpDir, { recursive: true, force: true });
 }
 
+// === property: aggregator is invariant under within-game event shuffling ===
+// (each summarizeGame metric is built from counts / per-event reads with no
+// inter-event ordering dependencies, so shuffling must not change the result)
+{
+  const allFixtures = await loadGameLogs(FIXTURES_DIR);
+  const baseline = aggregate(allFixtures);
+  delete baseline.meta.generated_at;
+
+  // PRNG with fixed seed so the test is deterministic
+  let state = 0xdeadbeef;
+  const rand = () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+
+  for (let trial = 0; trial < 8; trial += 1) {
+    const shuffled = allFixtures.map(({ path: p, events }) => {
+      const evs = events.slice();
+      for (let i = evs.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(rand() * (i + 1));
+        [evs[i], evs[j]] = [evs[j], evs[i]];
+      }
+      return { path: p, events: evs };
+    });
+    const trialSc = aggregate(shuffled);
+    delete trialSc.meta.generated_at;
+    assert.deepEqual(
+      trialSc,
+      baseline,
+      `shuffle trial ${trial} produced a different scorecard. aggregator has an order dependency`,
+    );
+  }
+}
+
 // === baseline regression: aggregating committed fixtures must match the committed scorecard ===
 {
   const games = await loadGameLogs(FIXTURES_DIR);

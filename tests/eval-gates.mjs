@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { DEFAULT_GATES, evaluateGates, formatGateReport } from "../eval/gates.mjs";
+import { DEFAULT_GATES, deriveBandsFromBaseline, evaluateGates, formatGateReport } from "../eval/gates.mjs";
 
 function scorecard(overrides = {}) {
   return {
@@ -158,6 +158,69 @@ assert.equal(typeof DEFAULT_GATES.action_in_phase_rate_min, "number");
   const r = evaluateGates({ prompt_following: {}, game_shape: {}, belief_quality: {} });
   assert.equal(r.pass, false);
   assert.ok(r.hard_failures.length >= 1);
+}
+
+// === deriveBandsFromBaseline ===
+{
+  const baseline = {
+    game_shape: { village_winrate: 0.6, avg_rounds: 4 },
+    belief_quality: { belief_emit_rate: 0.5 },
+  };
+  const bands = deriveBandsFromBaseline(baseline);
+  assert.deepEqual(bands.village_winrate_band, [0.6, 0.2]);
+  assert.deepEqual(bands.avg_rounds_band, [4, 2]);
+  assert.equal(bands.belief_emit_rate_min, 0.35);
+}
+// missing fields produce no bands
+assert.deepEqual(deriveBandsFromBaseline({}), {});
+assert.deepEqual(deriveBandsFromBaseline(null), {});
+// belief floor clamped at 0
+{
+  const bands = deriveBandsFromBaseline({ belief_quality: { belief_emit_rate: 0.05 } });
+  assert.equal(bands.belief_emit_rate_min, 0);
+}
+
+// === --baseline derives soft bands ===
+{
+  const baseline = {
+    game_shape: { village_winrate: 0.5, avg_rounds: 4 },
+    belief_quality: { belief_emit_rate: 0.5 },
+  };
+  // within band: no warning
+  const ok = evaluateGates(scorecard(), undefined, { baseline });
+  assert.equal(ok.pass, true);
+  assert.equal(ok.soft_warnings.length, 0);
+  assert.deepEqual(ok.gates.village_winrate_band, [0.5, 0.2]);
+
+  // outside band: warns
+  const drift = evaluateGates(scorecard({ game_shape: { village_winrate: 0.9 } }), undefined, { baseline });
+  assert.equal(drift.pass, true, "soft band drift does NOT hard-fail");
+  assert.equal(drift.soft_warnings.length, 1);
+  assert.equal(drift.soft_warnings[0].label, "village_winrate_band");
+}
+
+// === profile gates override baseline-derived bands ===
+{
+  const baseline = { game_shape: { village_winrate: 0.5 } };
+  const r = evaluateGates(
+    scorecard({ game_shape: { village_winrate: 0.99 } }),
+    { village_winrate_band: [0.99, 0.05] },
+    { baseline },
+  );
+  assert.equal(r.soft_warnings.length, 0, "profile-set band takes precedence");
+  assert.deepEqual(r.gates.village_winrate_band, [0.99, 0.05]);
+}
+
+// === baseline with belief floor causes soft warn when scorecard is below ===
+{
+  const baseline = { belief_quality: { belief_emit_rate: 0.6 } };
+  const r = evaluateGates(
+    scorecard({ belief_quality: { belief_emit_rate: 0.1 } }),
+    undefined,
+    { baseline },
+  );
+  assert.equal(r.pass, true);
+  assert.ok(r.soft_warnings.some((w) => w.label === "belief_emit_rate_min"));
 }
 
 console.log("ok - eval-gates");

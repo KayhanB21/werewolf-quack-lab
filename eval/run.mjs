@@ -50,6 +50,7 @@ export function validateProfile(profile) {
     base_url: profile.base_url ?? "",
     api_key_env: profile.api_key_env ?? "",
     gates: profile.gates ?? null,
+    baseline_path: profile.baseline_path ?? null,
   };
 }
 
@@ -188,7 +189,18 @@ export async function runProfile(profile, opts = {}) {
   if (collectedLogs.length > 0) {
     const games = await loadGameLogs(writeOut ? outDir : collectedLogs[0]);
     scorecard = aggregate(games);
-    gateReport = evaluateGates(scorecard, validated.gates);
+    let baseline = null;
+    if (validated.baseline_path) {
+      const absBaseline = path.isAbsolute(validated.baseline_path)
+        ? validated.baseline_path
+        : path.join(ROOT_DIR, validated.baseline_path);
+      try {
+        baseline = JSON.parse(await readFile(absBaseline, "utf8"));
+      } catch (error) {
+        console.error(`[eval-run] baseline_path ${validated.baseline_path}: ${error.message}`);
+      }
+    }
+    gateReport = evaluateGates(scorecard, validated.gates, { baseline });
     if (writeOut) {
       await writeFile(path.join(outDir, "scorecard.json"), `${JSON.stringify(scorecard, null, 2)}\n`);
       await writeFile(path.join(outDir, "gates.json"), `${JSON.stringify(gateReport, null, 2)}\n`);

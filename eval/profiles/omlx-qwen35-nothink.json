@@ -1,0 +1,28 @@
+{
+  "name": "omlx-qwen35-nothink",
+  "description": "Counterfactual: same model, same roster as omlx-qwen35, but thinking_budget=0. Used to quantify what reasoning buys us. Expect substantially worse seer_targeting_wolf_rate and possibly worse valid_json_rate. Gate floors loosened to allow the model to fail gracefully without flaking the build.",
+  "provider": "omlx",
+  "model": "MLX-Qwen3.5-9B-DeepSeek-V4-Flash-4bit",
+  "base_url": "http://localhost:8000/v1",
+  "api_key_env": "OMLX_API_KEY",
+  "game_count": 10,
+  "concurrency": 1,
+  "max_rounds": 8,
+  "wolf_rotation_cap": 3,
+  "thinking_budget": 0,
+  "temperature": 0.1,
+  "max_tokens": 800,
+  "players": [
+    { "id": "p1", "role": "wolf" },
+    { "id": "p2", "role": "wolf" },
+    { "id": "p3", "role": "seer" },
+    { "id": "p4", "role": "doctor" },
+    { "id": "p5", "role": "villager" }
+  ],
+  "gates": {
+    "valid_json_rate_min": 0.70,
+    "action_in_phase_rate_min": 0.90,
+    "http_error_rate_max": 0.10,
+    "incomplete_rate_max": 0.30
+  }
+}

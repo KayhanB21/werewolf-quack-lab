@@ -66,9 +66,14 @@ eval/       # eval framework
   gates.mjs               # hard/soft regression gates + CLI
   run.mjs                 # batch runner against /api/run, with concurrency
   profiles/
-    stub-smoke.json       # 3-game scripted pipeline sanity profile
-    omlx-qwen35.json      # 10-game Qwen3.5 profile with thinking_budget=400
-    omlx-large.json       # 50-game variance-analysis profile
+    stub-smoke.json       # 3-game scripted pipeline sanity (strict gates)
+    omlx-qwen35-mini.json # 5 games / 3 players — daily smoke
+    omlx-qwen35.json      # 10 games / 5 players — default omlx baseline
+    omlx-qwen35-nothink.json # thinking_budget=0 counterfactual
+    omlx-qwen35-7p.json   # 10 games / 7 players — larger roster
+    omlx-qwen35-hot.json  # temperature=0.7 variance probe
+    omlx-large.json       # 50-game variance-analysis baseline
+  baseline-refresh.mjs    # regenerate / verify eval/baselines/fixtures.json
   baselines/
     fixtures.json         # deterministic aggregate of eval/fixtures/
     README.md             # how to regenerate baselines
@@ -226,11 +231,18 @@ explicitly.
   `wolf_rotation_cap`.
 - **Regression gates** (`eval/gates.mjs`): hard floors on `valid_json_rate`,
   `action_in_phase_rate`, and hard ceilings on `http_error_rate` and
-  `incomplete_rate`. Soft band checks on `village_winrate` and `avg_rounds`
-  (require a per-profile baseline center+tolerance, off by default). Each
-  profile can override defaults under a `gates` block, including `skip:
-  true` for diagnostic runs. `eval/run.mjs` evaluates gates after
-  aggregation, writes `gates.json`, and exits non-zero on hard failure.
+  `incomplete_rate`. Soft band checks on `village_winrate`, `avg_rounds`,
+  and `belief_emit_rate`. Each profile can override defaults under a
+  `gates` block (including `skip: true` for diagnostic runs). A profile
+  can also point at a committed baseline via `baseline_path`; bands are
+  auto-derived from the baseline (winrate ±0.20, rounds ±2, belief floor
+  baseline−0.15) unless the profile explicitly overrides them.
+  `eval/run.mjs` evaluates gates after aggregation, writes `gates.json`,
+  and exits non-zero on hard failure.
+- **Aggregator order-invariance**: `tests/eval-aggregate.mjs` runs 8
+  seeded within-game event shuffles and asserts the scorecard is
+  byte-identical, so any new aggregator state that introduces an event
+  ordering dependency trips the test loudly.
 - **Fixtures + committed baseline**: `eval/fixtures/{village-win,wolf-win,
   malformed-turn-stats}.jsonl` are the canonical reference logs;
   `tests/eval-aggregate.mjs` asserts the aggregator output matches

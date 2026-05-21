@@ -12,5 +12,11 @@
     { "id": "p3", "role": "seer" },
     { "id": "p4", "role": "doctor" },
     { "id": "p5", "role": "villager" }
-  ]
+  ],
+  "gates": {
+    "valid_json_rate_min": 1.0,
+    "action_in_phase_rate_min": 1.0,
+    "http_error_rate_max": 0,
+    "incomplete_rate_max": 0
+  }
 }

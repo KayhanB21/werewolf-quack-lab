@@ -222,6 +222,13 @@ make web-test   Run the orchestrator unit checks (tests/lab-web.mjs)
 make eval-test  Run the eval framework unit checks
 make eval-run PROFILE=eval/profiles/<name>.json  Run a batch eval profile
 make eval-large Run the 50-game omlx variance profile
+make eval-mini  Run the 5-game / 3-player omlx daily smoke
+make eval-nothink   Run the thinking_budget=0 omlx counterfactual
+make eval-7p    Run the 7-player omlx profile
+make eval-hot   Run the temperature=0.7 omlx variance probe
+make eval-all-omlx  Run every omlx profile back-to-back (short-circuits on gate failure)
+make baseline-refresh   Regenerate eval/baselines/fixtures.json
+make baseline-check     Verify the committed baseline matches the aggregator
 make test       Run agent, generator, web, eval, and real Quack smoke checks
 make down       Stop the generated lab
 ```
