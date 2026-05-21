@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "eval:local": "node ./eval/run.mjs ./eval/profiles/omlx-qwen35-mini.json",
-    "eval:matrix": "promptfoo eval -c ./eval/promptfooconfig.yaml",
+    "eval:matrix": "node ./node_modules/promptfoo/dist/src/main.js eval -c ./eval/promptfooconfig.yaml --max-concurrency 1",
     "eval:report": "node ./eval/report.mjs ./eval/runs",
     "eval:hosted": "node ./eval/run.mjs ./eval/profiles/anthropic-haiku.json"
   },

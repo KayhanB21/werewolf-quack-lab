@@ -32,10 +32,15 @@ export default class WerewolfRunProvider {
       game_count: Number(vars.game_count || this.config.game_count || profile.game_count),
       concurrency: Number(vars.concurrency || this.config.concurrency || profile.concurrency || 1),
     };
-    const result = await runProfile(merged, {
-      server: vars.server || this.config.server || process.env.LAB_WEB_URL || "http://localhost:5174",
-      outDir: vars.out_dir || this.config.out_dir,
-    });
+    let result;
+    try {
+      result = await runProfile(merged, {
+        server: vars.server || this.config.server || process.env.LAB_WEB_URL || "http://localhost:5174",
+        outDir: vars.out_dir || this.config.out_dir,
+      });
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
     if (!result.scorecard) {
       return { error: "eval run produced no scorecard", metadata: { outDir: result.outDir, results: result.results } };
     }

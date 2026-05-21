@@ -188,6 +188,12 @@ export async function runProfile(profile, opts = {}) {
   const writeOut = opts.writeOut !== false;
   const startedAt = new Date().toISOString();
 
+  if (validated.api_key_env && !apiKey && opts.allowMissingApiKey !== true) {
+    throw new Error(
+      `${validated.name} requires ${validated.api_key_env}; set it in the environment that runs eval/run.mjs or starts the web server`,
+    );
+  }
+
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
   const outDir = opts.outDir || path.join(ROOT_DIR, "eval", "runs", `${validated.name}-${stamp}`);
   if (writeOut) await mkdir(outDir, { recursive: true });
