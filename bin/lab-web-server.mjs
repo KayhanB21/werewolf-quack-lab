@@ -1,36 +1,38 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+// Werewolf Quack Lab web server.
+//
+// HTTP shell around the orchestrator (lib/referee.mjs). The referee owns
+// every orchestrator concern (game loop, durable log, child-process
+// supervision); this file is intentionally just routing, request shaping,
+// and the NDJSON HTTP sink.
+
 import { createReadStream } from "node:fs";
-import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  applyBeliefsMarkers,
-  buildContextForAgent,
   buildGameConfig,
   buildLabEnv,
   getActionPlan,
-  latestKillsPerWolf,
-  latestRowPerAgent,
   listActions,
-  newRefereeGameId,
-  parseBeliefsMarkers,
-  parseTurnStatsMarkers,
-  resolveLynch,
-  resolveNightOutcome,
-  serializeRefereeEvent,
   toHostModelUrl,
 } from "../lib/lab-web-actions.mjs";
-import { extractJsonArrays } from "../web/flow.mjs";
+import {
+  httpSink,
+  killActiveChildren,
+  pickRows,
+  ROOT_DIR,
+  runAutoGame,
+  runBufferedStep,
+  runStep,
+} from "../lib/referee.mjs";
 
-const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const WEB_DIR = path.join(ROOT_DIR, "web");
 const GENERATED_DIR = path.join(ROOT_DIR, ".generated");
 const WEB_CONFIG_PATH = path.join(GENERATED_DIR, "web-game.json");
 const PORT = Number(process.env.LAB_WEB_PORT || process.env.PORT || 5174);
 const DEV_MODE = truthyEnv(process.env.LAB_WEB_DEV);
-const activeChildren = new Set();
 
 const MIME = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -58,159 +60,8 @@ async function readJson(req) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-function writeEvent(res, type, payload = {}) {
-  res.write(`${JSON.stringify({ type, ...payload })}\n`);
-}
-
-function stripAnsi(text) {
-  return text.replace(/\u001b\[[0-9;]*m/g, "");
-}
-
 function truthyEnv(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
-}
-
-function registerChild(child) {
-  activeChildren.add(child);
-  child.on("close", () => {
-    activeChildren.delete(child);
-  });
-  return child;
-}
-
-function killActiveChildren() {
-  for (const child of activeChildren) {
-    if (!child.killed) child.kill("SIGTERM");
-  }
-}
-
-async function runStep(command, args, env, res, shouldAbort) {
-  writeEvent(res, "step", { command: [command, ...args].join(" ") });
-
-  return new Promise((resolve) => {
-    const child = registerChild(spawn(command, args, {
-      cwd: ROOT_DIR,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    }));
-
-    const stop = () => {
-      if (!child.killed) child.kill("SIGTERM");
-    };
-    shouldAbort.onAbort = stop;
-
-    child.stdout.on("data", (chunk) => {
-      writeEvent(res, "stdout", { data: stripAnsi(chunk.toString("utf8")) });
-    });
-    child.stderr.on("data", (chunk) => {
-      writeEvent(res, "stderr", { data: stripAnsi(chunk.toString("utf8")) });
-    });
-    child.on("error", (error) => {
-      writeEvent(res, "error", { message: error.message });
-      resolve(1);
-    });
-    child.on("close", (code, signal) => {
-      shouldAbort.onAbort = null;
-      writeEvent(res, "exit", { code, signal });
-      resolve(code ?? 1);
-    });
-  });
-}
-
-async function runStepCapture(command, args, env, res, shouldAbort) {
-  writeEvent(res, "step", { command: [command, ...args].join(" ") });
-
-  return new Promise((resolve) => {
-    const child = registerChild(spawn(command, args, {
-      cwd: ROOT_DIR,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    }));
-    let stdout = "";
-    let stderr = "";
-
-    const stop = () => {
-      if (!child.killed) child.kill("SIGTERM");
-    };
-    shouldAbort.onAbort = stop;
-
-    child.stdout.on("data", (chunk) => {
-      const data = stripAnsi(chunk.toString("utf8"));
-      stdout += data;
-      writeEvent(res, "stdout", { data });
-    });
-    child.stderr.on("data", (chunk) => {
-      const data = stripAnsi(chunk.toString("utf8"));
-      stderr += data;
-      writeEvent(res, "stderr", { data });
-    });
-    child.on("error", (error) => {
-      stderr += error.message;
-      writeEvent(res, "error", { message: error.message });
-      resolve({ code: 1, stdout, stderr });
-    });
-    child.on("close", (code, signal) => {
-      shouldAbort.onAbort = null;
-      writeEvent(res, "exit", { code, signal });
-      resolve({ code: code ?? 1, stdout, stderr });
-    });
-  });
-}
-
-async function runStepInCurrent(command, args, env, res, shouldAbort) {
-  return new Promise((resolve) => {
-    const child = registerChild(spawn(command, args, {
-      cwd: ROOT_DIR,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    }));
-
-    const stop = () => {
-      if (!child.killed) child.kill("SIGTERM");
-    };
-    shouldAbort.onAbort = stop;
-
-    child.stdout.on("data", (chunk) => {
-      writeEvent(res, "stdout", { data: stripAnsi(chunk.toString("utf8")) });
-    });
-    child.stderr.on("data", (chunk) => {
-      writeEvent(res, "stderr", { data: stripAnsi(chunk.toString("utf8")) });
-    });
-    child.on("error", (error) => {
-      writeEvent(res, "error", { message: error.message });
-      resolve(1);
-    });
-    child.on("close", (code) => {
-      shouldAbort.onAbort = null;
-      resolve(code ?? 1);
-    });
-  });
-}
-
-async function runBufferedStep(command, args, env) {
-  return new Promise((resolve) => {
-    const child = registerChild(spawn(command, args, {
-      cwd: ROOT_DIR,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    }));
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.on("data", (chunk) => {
-      stdout += stripAnsi(chunk.toString("utf8"));
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += stripAnsi(chunk.toString("utf8"));
-    });
-    child.on("error", (error) => {
-      stderr += error.message;
-      resolve({ code: 1, stdout, stderr });
-    });
-    child.on("close", (code) => {
-      resolve({ code: code ?? 1, stdout, stderr });
-    });
-  });
 }
 
 async function handleRun(req, res) {
@@ -241,7 +92,8 @@ async function handleRun(req, res) {
     "X-Accel-Buffering": "no",
   });
 
-  writeEvent(res, "start", {
+  const sink = httpSink(res);
+  sink.write("start", {
     action: body.action,
     label: plan.label,
     provider: env.LLM_PROVIDER,
@@ -249,9 +101,9 @@ async function handleRun(req, res) {
   });
 
   if (plan.special === "autoGame") {
-    const ok = await runAutoGame(body, env, res, shouldAbort, () => closed);
+    const ok = await runAutoGame(body, env, sink, { shouldAbort, isClosed: () => closed });
     if (!closed) {
-      writeEvent(res, "done", { ok });
+      sink.write("done", { ok });
       res.end();
     }
     return;
@@ -259,512 +111,16 @@ async function handleRun(req, res) {
 
   for (const [command, args] of plan.steps) {
     if (closed) return;
-    const code = await runStep(command, args, env, res, shouldAbort);
+    const code = await runStep(command, args, env, sink, shouldAbort);
     if (code !== 0) {
-      writeEvent(res, "done", { ok: false });
+      sink.write("done", { ok: false });
       res.end();
       return;
     }
   }
 
-  writeEvent(res, "done", { ok: true });
+  sink.write("done", { ok: true });
   res.end();
-}
-
-async function runAutoGame(body, env, res, shouldAbort, isClosed) {
-  const gameConfig = buildGameConfig(body);
-  const players = gameConfig.players;
-  const roles = new Map(players.map((player) => [player.id, player.role]));
-  const history = [];
-  const eliminated = [];
-  const publicLog = [];
-  const publicEvents = [];
-  const privateNotesByAgent = new Map(players.map((player) => [player.id, []]));
-  const beliefsByAgent = new Map(
-    players.map((player) => [player.id, { suspicions: [], knowledge: [] }]),
-  );
-  let alive = players.map((player) => player.id);
-  let winner = "";
-  let reason = "";
-  const maxRounds = clampInt(body.maxRounds, 8, 1, 20);
-  const wolfRotationCap = clampInt(body.wolfRotationCap, 3, 1, 6);
-
-  const gameId = newRefereeGameId();
-  const gamesDir = path.join(GENERATED_DIR, "games");
-  const logPath = path.join(gamesDir, `${gameId}.jsonl`);
-  await mkdir(gamesDir, { recursive: true });
-  const logEvent = async (event) => {
-    try {
-      await appendFile(logPath, serializeRefereeEvent(event));
-    } catch (error) {
-      writeEvent(res, "stderr", {
-        data: `[referee] failed to append durable log: ${error.message}\n`,
-      });
-    }
-  };
-  await logEvent({
-    kind: "game-start",
-    game_id: gameId,
-    players: players.map((player) => ({ id: player.id, role: player.role })),
-    provider: env.LLM_PROVIDER,
-    model: env.LLM_MODEL,
-    max_rounds: maxRounds,
-  });
-  writeEvent(res, "stdout", { data: `[referee] durable log: ${path.relative(ROOT_DIR, logPath)}\n` });
-
-  function envForId(phase, round, base, extra = {}) {
-    return (id) => ({
-      ...base,
-      ...extra,
-      ACTIVE_PLAYER_IDS: alive.join(","),
-      CONTEXT_JSON: JSON.stringify(
-        buildContextForAgent(id, {
-          round,
-          phase,
-          alive,
-          eliminated,
-          publicEvents,
-          publicLog,
-          privateNotesByAgent,
-          beliefsByAgent,
-        }),
-      ),
-    });
-  }
-
-  for (const [command, args] of [
-    ["./bin/labctl", ["down"]],
-    ["./bin/labctl", ["up"]],
-  ]) {
-    if (isClosed()) return false;
-    const result = await runStep(command, args, env, res, shouldAbort);
-    if (result !== 0) return false;
-  }
-
-  for (let round = 1; round <= maxRounds; round += 1) {
-    const roundEnv = { ...env, ROUND: String(round) };
-    await logEvent({ kind: "round-start", round, alive: alive.slice() });
-    writeEvent(res, "stdout", {
-      data: `[referee] round ${round} starts with ${alive.join(", ")}\n`,
-    });
-
-    const discussionOk = await runAgentPhase(
-      `referee round ${round} discussion`,
-      alive,
-      "day",
-      envForId("day-discuss", round, roundEnv),
-      res,
-      shouldAbort,
-      isClosed,
-      beliefsByAgent,
-      logEvent,
-    );
-    if (!discussionOk) return false;
-
-    const discussionLog = await runFilteredQuery(
-      `referee round ${round} discussion log`,
-      "public_log",
-      roundEnv,
-      res,
-      (row) =>
-        Number(row.round) === round &&
-        row.action !== "vote" &&
-        alive.includes(row.agent_id),
-    );
-    if (discussionLog.code !== 0) return false;
-    publicLog.push(...discussionLog.rows);
-    history.push({
-      round,
-      phase: "discussion",
-      event: "talk",
-      turns: discussionLog.rows.length,
-    });
-
-    const voteOk = await runAgentPhase(
-      `referee round ${round} voting`,
-      alive,
-      "vote",
-      envForId("day-vote", round, roundEnv),
-      res,
-      shouldAbort,
-      isClosed,
-      beliefsByAgent,
-      logEvent,
-    );
-    if (!voteOk) return false;
-
-    const dayLog = await runFilteredQuery(
-      `referee round ${round} vote log`,
-      "public_log",
-      roundEnv,
-      res,
-      (row) =>
-        Number(row.round) === round &&
-        row.action === "vote" &&
-        alive.includes(row.agent_id) &&
-        alive.includes(row.target),
-    );
-    if (dayLog.code !== 0) return false;
-    publicLog.push(...dayLog.rows);
-
-    const lynch = resolveLynch(dayLog.rows);
-    if (lynch.outcome === "lynch") {
-      alive = alive.filter((id) => id !== lynch.target);
-      const revealedRole = roles.get(lynch.target) || "unknown";
-      eliminated.push({
-        id: lynch.target,
-        role: revealedRole,
-        round,
-        phase: "day",
-        cause: "lynch",
-      });
-      const announcement = `Round ${round}: ${lynch.target} was lynched (${lynch.votes} vote(s)). Revealed role: ${revealedRole}.`;
-      publicEvents.push(announcement);
-      await runBufferedStep(
-        "./bin/labctl",
-        ["ref-reveal", lynch.target, String(round), announcement],
-        roundEnv,
-      );
-      await runBufferedStep(
-        "./bin/labctl",
-        ["ref-elim", lynch.target, String(round), revealedRole, "lynch"],
-        roundEnv,
-      );
-      history.push({
-        round,
-        phase: "day",
-        event: "vote",
-        target: lynch.target,
-        votes: lynch.votes,
-      });
-      await logEvent({
-        kind: "lynch",
-        round,
-        target: lynch.target,
-        votes: lynch.votes,
-        revealed_role: revealedRole,
-      });
-      writeEvent(res, "stdout", {
-        data: `[referee] day ${round}: ${lynch.target} eliminated by ${lynch.votes} vote(s); revealed role: ${revealedRole}\n`,
-      });
-    } else {
-      const tied = lynch.votes > 0;
-      const note = tied
-        ? `Round ${round}: vote ended in a tie at ${lynch.votes} (no lynch).`
-        : `Round ${round}: vote ended with no lynch.`;
-      history.push({ round, phase: "day", event: tied ? "tie" : "no-elimination" });
-      publicEvents.push(note);
-      await logEvent({ kind: "no-lynch", round, tied, votes: lynch.votes });
-      writeEvent(res, "stdout", { data: `[referee] ${note}\n` });
-    }
-
-    const dayWin = winnerFor(alive, roles);
-    if (dayWin) {
-      winner = dayWin.winner;
-      reason = dayWin.reason;
-      break;
-    }
-
-    const liveWolves = alive.filter((id) => roles.get(id) === "wolf");
-    const wolfRotationRows = [];
-    for (let rotation = 1; rotation <= wolfRotationCap; rotation += 1) {
-      const wolfEnv = envForId("night-wolf", round, roundEnv, {
-        WOLF_CHANNEL_JSON: JSON.stringify(wolfRotationRows),
-      });
-      const wolfOk = await runAgentPhase(
-        `referee round ${round} wolf rotation ${rotation}`,
-        liveWolves,
-        "wolf",
-        wolfEnv,
-        res,
-        shouldAbort,
-        isClosed,
-        beliefsByAgent,
-        logEvent,
-      );
-      if (!wolfOk) return false;
-
-      const rotationLog = await runFilteredQuery(
-        `referee round ${round} wolf log rotation ${rotation}`,
-        "wolf_channel",
-        roundEnv,
-        res,
-        (row) =>
-          Number(row.round) === round &&
-          (row.action === "wolf-kill" || row.action === "wolf-done") &&
-          alive.includes(row.agent_id) &&
-          alive.includes(row.target),
-      );
-      if (rotationLog.code !== 0) return false;
-      wolfRotationRows.splice(0, wolfRotationRows.length, ...rotationLog.rows);
-
-      const latestByWolf = latestRowPerAgent(wolfRotationRows);
-      const allDone =
-        liveWolves.length > 0 &&
-        liveWolves.every((id) => latestByWolf.get(id)?.action === "wolf-done");
-      if (allDone) {
-        writeEvent(res, "stdout", {
-          data: `[referee] night ${round}: wolf consensus reached after rotation ${rotation}\n`,
-        });
-        break;
-      }
-    }
-
-    const wolfLog = { rows: latestKillsPerWolf(wolfRotationRows, liveWolves) };
-
-    const liveDoctors = alive.filter((id) => roles.get(id) === "doctor");
-    const doctorOk = await runAgentPhase(
-      `referee round ${round} doctor`,
-      liveDoctors,
-      "doctor",
-      envForId("night-doctor", round, roundEnv),
-      res,
-      shouldAbort,
-      isClosed,
-      beliefsByAgent,
-      logEvent,
-    );
-    if (!doctorOk) return false;
-
-    const doctorLog = await runFilteredQuery(
-      `referee round ${round} doctor log`,
-      "doctor_channel",
-      roundEnv,
-      res,
-      (row) =>
-        Number(row.round) === round &&
-        row.action === "doctor-save" &&
-        alive.includes(row.agent_id) &&
-        alive.includes(row.target),
-    );
-    if (doctorLog.code !== 0) return false;
-
-    const liveSeers = alive.filter((id) => roles.get(id) === "seer");
-    const seerOk = await runAgentPhase(
-      `referee round ${round} seer`,
-      liveSeers,
-      "seer",
-      envForId("night-seer", round, roundEnv),
-      res,
-      shouldAbort,
-      isClosed,
-      beliefsByAgent,
-      logEvent,
-    );
-    if (!seerOk) return false;
-
-    const seerLog = await runFilteredQuery(
-      `referee round ${round} seer log`,
-      "seer_channel",
-      roundEnv,
-      res,
-      (row) =>
-        Number(row.round) === round &&
-        row.action === "seer-investigate" &&
-        alive.includes(row.agent_id) &&
-        alive.includes(row.target),
-    );
-    if (seerLog.code !== 0) return false;
-
-    const night = resolveNightOutcome(wolfLog.rows, doctorLog.rows);
-    if (night.outcome === "kill") {
-      alive = alive.filter((id) => id !== night.target);
-      const revealedRole = roles.get(night.target) || "unknown";
-      eliminated.push({
-        id: night.target,
-        role: revealedRole,
-        round,
-        phase: "wolf",
-        cause: "wolf-kill",
-      });
-      const announcement = `Round ${round}: ${night.target} was killed by wolves. Revealed role: ${revealedRole}.`;
-      publicEvents.push(announcement);
-      await runBufferedStep(
-        "./bin/labctl",
-        ["ref-reveal", night.target, String(round), announcement],
-        roundEnv,
-      );
-      await runBufferedStep(
-        "./bin/labctl",
-        ["ref-elim", night.target, String(round), revealedRole, "wolf-kill"],
-        roundEnv,
-      );
-      history.push({
-        round,
-        phase: "wolf",
-        event: "kill",
-        target: night.target,
-        votes: night.votes,
-      });
-      await logEvent({
-        kind: "wolf-kill",
-        round,
-        target: night.target,
-        votes: night.votes,
-        revealed_role: revealedRole,
-      });
-      writeEvent(res, "stdout", {
-        data: `[referee] night ${round}: ${night.target} killed by wolves; revealed role: ${revealedRole}\n`,
-      });
-    } else if (night.outcome === "saved") {
-      history.push({
-        round,
-        phase: "wolf",
-        event: "saved",
-        target: night.target,
-        votes: night.votes,
-      });
-      publicEvents.push(`Round ${round}: no one died last night.`);
-      await logEvent({
-        kind: "wolf-saved",
-        round,
-        target: night.target,
-        votes: night.votes,
-      });
-      writeEvent(res, "stdout", {
-        data: `[referee] night ${round}: ${night.target} was attacked but saved (kept private)\n`,
-      });
-    } else {
-      history.push({ round, phase: "wolf", event: "no-kill" });
-      publicEvents.push(`Round ${round}: no one died last night.`);
-      await logEvent({ kind: "no-kill", round });
-      writeEvent(res, "stdout", { data: `[referee] night ${round}: no kill\n` });
-    }
-
-    for (const seer of liveSeers) {
-      const proposals = seerLog.rows.filter((row) => row.agent_id === seer);
-      const proposal = proposals[proposals.length - 1];
-      if (!proposal || !proposal.target) continue;
-      const targetRole = roles.get(proposal.target);
-      if (!targetRole) continue;
-      const note = `Round ${round}: ${proposal.target} is ${targetRole}.`;
-      const writeResult = await runBufferedStep(
-        "./bin/labctl",
-        ["ref-knowledge", seer, String(round), "seer", note],
-        roundEnv,
-      );
-      if (writeResult.code !== 0) {
-        writeEvent(res, "stderr", {
-          data: `[referee] failed to write seer knowledge for ${seer}: ${writeResult.stderr}\n`,
-        });
-      } else {
-        const seerNotes = privateNotesByAgent.get(seer) || [];
-        seerNotes.push(note);
-        privateNotesByAgent.set(seer, seerNotes);
-        history.push({
-          round,
-          phase: "seer",
-          event: "investigate",
-          agent: seer,
-          target: proposal.target,
-          result: targetRole,
-        });
-        await logEvent({
-          kind: "seer-learn",
-          round,
-          agent: seer,
-          target: proposal.target,
-          result: targetRole,
-        });
-        writeEvent(res, "stdout", {
-          data: `[referee] night ${round}: seer ${seer} learns ${proposal.target} is ${targetRole}\n`,
-        });
-      }
-    }
-
-    const wolfWin = winnerFor(alive, roles);
-    if (wolfWin) {
-      winner = wolfWin.winner;
-      reason = wolfWin.reason;
-      break;
-    }
-  }
-
-  if (!winner) {
-    winner = "undecided";
-    reason = `max rounds reached (${maxRounds})`;
-  }
-
-  const result = {
-    winner,
-    reason,
-    rounds: history.reduce((value, item) => Math.max(value, item.round || 0), 0),
-    alive,
-    eliminated,
-    history,
-    durable_log: path.relative(ROOT_DIR, logPath),
-  };
-
-  await logEvent({
-    kind: "game-end",
-    winner,
-    reason,
-    rounds: result.rounds,
-    alive: alive.slice(),
-    eliminated: eliminated.slice(),
-  });
-
-  writeEvent(res, "step", { command: "referee auto-game" });
-  writeEvent(res, "stdout", { data: `${JSON.stringify([result])}\n` });
-  writeEvent(res, "exit", { code: 0, signal: null });
-  return true;
-}
-
-async function runAgentPhase(
-  command,
-  ids,
-  phase,
-  envOrFn,
-  res,
-  shouldAbort,
-  isClosed,
-  beliefsByAgent,
-  logEvent,
-) {
-  writeEvent(res, "step", { command });
-  const getEnv = typeof envOrFn === "function" ? envOrFn : () => envOrFn;
-
-  for (const id of ids) {
-    if (isClosed()) return false;
-    const { code, stdout } = await runStepCapture(
-      "./bin/labctl",
-      ["run-agent", id, phase],
-      getEnv(id),
-      res,
-      shouldAbort,
-    );
-    if (beliefsByAgent) {
-      applyBeliefsMarkers(beliefsByAgent, parseBeliefsMarkers(stdout));
-    }
-    if (logEvent) {
-      for (const stats of parseTurnStatsMarkers(stdout)) {
-        await logEvent({ kind: "turn-stats", ...stats });
-      }
-    }
-    if (code !== 0) {
-      writeEvent(res, "exit", { code, signal: null });
-      return false;
-    }
-  }
-
-  writeEvent(res, "exit", { code: 0, signal: null });
-  return true;
-}
-
-async function runFilteredQuery(command, queryName, env, res, predicate) {
-  writeEvent(res, "step", { command });
-  const result = await runBufferedStep("./bin/labctl", ["query", queryName], env);
-
-  if (result.code !== 0) {
-    writeEvent(res, "stderr", { data: `${result.stdout}${result.stderr}` });
-    writeEvent(res, "exit", { code: result.code, signal: null });
-    return { code: result.code, rows: [] };
-  }
-
-  const rows = pickRows(result.stdout, queryName).filter(predicate);
-  writeEvent(res, "stdout", { data: `${JSON.stringify(rows)}\n` });
-  writeEvent(res, "exit", { code: 0, signal: null });
-  return { code: 0, rows };
 }
 
 async function handleExport(req, res) {
@@ -865,38 +221,6 @@ async function handleModels(req, res) {
   } catch (error) {
     sendJson(res, 502, { error: error.message, url });
   }
-}
-
-function pickRows(raw, queryName) {
-  const arrays = extractJsonArrays(raw).filter((value) => Array.isArray(value));
-  const predicates = {
-    whoami: (row) => row.name,
-    public_log: (row) => row.public_text,
-    wolf_channel: (row) => row.action === "wolf-kill" || row.action === "wolf-done" || row.rationale,
-    seer_channel: (row) => row.action === "seer-investigate" || row.rationale,
-    doctor_channel: (row) => row.action === "doctor-save" || row.rationale,
-    full_log: (row) => row.public_text || row.rationale,
-  };
-  const predicate = predicates[queryName] || (() => true);
-  return arrays.find((rows) => rows.some((row) => row && typeof row === "object" && predicate(row))) || [];
-}
-
-function winnerFor(alive, roles) {
-  const wolves = alive.filter((id) => roles.get(id) === "wolf").length;
-  const town = alive.length - wolves;
-  if (wolves === 0) {
-    return { winner: "village", reason: "all wolves were eliminated" };
-  }
-  if (wolves >= town) {
-    return { winner: "wolves", reason: "wolves reached parity with town" };
-  }
-  return null;
-}
-
-function clampInt(value, fallback, min, max) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(max, Math.max(min, Math.trunc(parsed)));
 }
 
 async function serveStatic(req, res) {

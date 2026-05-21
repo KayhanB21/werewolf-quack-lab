@@ -20,6 +20,7 @@ web-dev:
 
 web-test:
 	node ./tests/lab-web.mjs
+	node ./tests/referee.mjs
 
 eval-test:
 	node ./tests/eval-aggregate.mjs

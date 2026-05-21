@@ -44,8 +44,9 @@ under 10 seconds per turn when `thinking_budget` is non-zero.
 ```
 bin/        # user-callable entry points
   labctl                  # Docker / lab control
-  lab-web-server.mjs      # orchestrator HTTP server + autoGame referee
+  lab-web-server.mjs      # HTTP shell (routing + sinks; orchestrator lives in lib/)
   lab-web-dev.mjs         # dev mode: server with watch-and-reload
+  referee.mjs             # standalone CLI that runs one auto-game without HTTP
   smoke-test.sh           # runs every test then `labctl smoke`
   omlx-smoke-test.sh      # opt-in smoke against a host omlx server
 
@@ -57,6 +58,7 @@ container/  # scripts that run INSIDE Docker player / gateway containers
 
 lib/        # importable / sourceable modules
   lab-web-actions.mjs     # pure helpers: env, context, markers, game logic
+  referee.mjs             # orchestrator: runAutoGame + child supervision + sinks
   lab-span.sh             # emit_span / span_now_ms (federation timeline)
   mint-token.sh           # HMAC-SHA256 lab_check_token minter
   generate-compose.sh     # per-player compose generator
@@ -90,6 +92,7 @@ tests/      # all test suites
   lab-span.sh
   generated-compose.sh
   lab-web.mjs
+  referee.mjs             # sink abstraction + helpers + child supervision
   eval-aggregate.mjs
   eval-gates.mjs
   eval-run.mjs
@@ -309,10 +312,14 @@ layout end to end.
 
 ## Backlog
 
-1. Promote the orchestrator out of `lab-web-server.mjs` into a standalone
-   `bin/referee.mjs` so the HTTP server is just a thin shell. The
-   orchestrator code is now ~700 lines living in the same file as request
-   routing.
+1. ~~Promote the orchestrator out of `lab-web-server.mjs`.~~ Done
+   2026-05-20: `lib/referee.mjs` owns `runAutoGame` + child supervision +
+   `runStep` / `runStepCapture` / `runBufferedStep` / `runAgentPhase` /
+   `runFilteredQuery` / `pickRows` / `winnerFor` / `clampInt`. A small
+   sink contract (`{ write(type, payload) }`) lets HTTP, stdout, and
+   array sinks drive the same code path. `bin/lab-web-server.mjs` is now
+   HTTP routing only; `bin/referee.mjs` is a standalone CLI that runs
+   one auto-game from a spec JSON.
 2. Per-host `quack_query` spans: parse `duckdb_logs_parsed('Quack')` output
    and emit one span per remote call instead of the current aggregate span.
 3. Hosted-LLM provider path: Anthropic's `/messages` API is not
