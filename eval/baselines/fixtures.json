@@ -1,0 +1,117 @@
+{
+  "meta": {
+    "game_count": 3,
+    "completed_game_count": 2,
+    "providers": [
+      "omlx",
+      "stub"
+    ],
+    "models": [
+      "qwen",
+      "stub-werewolf-v1"
+    ]
+  },
+  "prompt_following": {
+    "total_turns": 4,
+    "valid_json_rate": 0.5,
+    "action_in_phase_rate": 1,
+    "http_error_rate": 0.25,
+    "parse_path_histogram": {
+      "http-error": 1,
+      "object": 1,
+      "text": 1,
+      "stub": 1
+    },
+    "finish_reason_histogram": {
+      "(empty)": 2,
+      "stop": 1,
+      "length": 1
+    },
+    "raw_action_histogram": {
+      "speak": 4
+    }
+  },
+  "game_shape": {
+    "village_winrate": 0.5,
+    "wolves_winrate": 0.5,
+    "incomplete_rate": 0.3333333333333333,
+    "avg_rounds": 1.5,
+    "rounds_histogram": {
+      "1": 1,
+      "2": 1
+    },
+    "lynch_rate_per_day": 0.5,
+    "night_saved_rate": 0.3333333333333333,
+    "no_kill_rate": 0
+  },
+  "belief_quality": {
+    "belief_emit_rate": 0.5,
+    "avg_suspicions_per_turn": 0.25,
+    "avg_knowledge_per_turn": 0.25,
+    "seer_targeting_wolf_rate": 1
+  },
+  "performance": {
+    "avg_latency_ms": 10501,
+    "p50_latency_ms": 9000,
+    "p95_latency_ms": 30000,
+    "avg_prompt_tokens": 600,
+    "avg_completion_tokens": 230,
+    "avg_reasoning_tokens": 40,
+    "total_prompt_tokens": 1200,
+    "total_completion_tokens": 460,
+    "total_reasoning_tokens": 80
+  },
+  "per_game": [
+    {
+      "game_id": "g2",
+      "provider": "omlx",
+      "model": "qwen",
+      "completed": false,
+      "winner": "",
+      "reason": "",
+      "rounds": 1,
+      "lynches": 0,
+      "no_lynches": 0,
+      "wolf_kills": 0,
+      "wolf_saved": 0,
+      "no_kill": 0,
+      "seer_learns": 0,
+      "seer_targeted_wolf": 0,
+      "turn_count": 1
+    },
+    {
+      "game_id": "g1",
+      "provider": "omlx",
+      "model": "qwen",
+      "completed": true,
+      "winner": "village",
+      "reason": "all wolves eliminated",
+      "rounds": 2,
+      "lynches": 1,
+      "no_lynches": 1,
+      "wolf_kills": 1,
+      "wolf_saved": 1,
+      "no_kill": 0,
+      "seer_learns": 1,
+      "seer_targeted_wolf": 1,
+      "turn_count": 2
+    },
+    {
+      "game_id": "g3",
+      "provider": "stub",
+      "model": "stub-werewolf-v1",
+      "completed": true,
+      "winner": "wolves",
+      "reason": "wolves outnumber villagers",
+      "rounds": 1,
+      "lynches": 0,
+      "no_lynches": 0,
+      "wolf_kills": 1,
+      "wolf_saved": 0,
+      "no_kill": 0,
+      "seer_learns": 0,
+      "seer_targeted_wolf": 0,
+      "turn_count": 1
+    }
+  ]
+}

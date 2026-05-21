@@ -1,0 +1,28 @@
+{
+  "name": "omlx-large",
+  "description": "50-game variance-analysis profile against local omlx + Qwen3.5-9B-DeepSeek-V4-Flash-4bit. Same shape as omlx-qwen35 but larger N, so a single regression has a more reliable signal. Bump to 100 only if stddev across runs is wider than the gate bands. Expects the host omlx server on localhost:8000.",
+  "provider": "omlx",
+  "model": "MLX-Qwen3.5-9B-DeepSeek-V4-Flash-4bit",
+  "base_url": "http://localhost:8000/v1",
+  "api_key_env": "OMLX_API_KEY",
+  "game_count": 50,
+  "concurrency": 1,
+  "max_rounds": 8,
+  "wolf_rotation_cap": 3,
+  "thinking_budget": 400,
+  "temperature": 0.1,
+  "max_tokens": 800,
+  "players": [
+    { "id": "p1", "role": "wolf" },
+    { "id": "p2", "role": "wolf" },
+    { "id": "p3", "role": "seer" },
+    { "id": "p4", "role": "doctor" },
+    { "id": "p5", "role": "villager" }
+  ],
+  "gates": {
+    "valid_json_rate_min": 0.85,
+    "action_in_phase_rate_min": 0.95,
+    "http_error_rate_max": 0.05,
+    "incomplete_rate_max": 0.10
+  }
+}

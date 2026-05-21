@@ -1,0 +1,163 @@
+#!/usr/bin/env node
+import assert from "node:assert/strict";
+import { DEFAULT_GATES, evaluateGates, formatGateReport } from "../eval/gates.mjs";
+
+function scorecard(overrides = {}) {
+  return {
+    prompt_following: {
+      valid_json_rate: 1,
+      action_in_phase_rate: 1,
+      http_error_rate: 0,
+      ...(overrides.prompt_following || {}),
+    },
+    game_shape: {
+      incomplete_rate: 0,
+      village_winrate: 0.5,
+      avg_rounds: 4,
+      ...(overrides.game_shape || {}),
+    },
+    belief_quality: {
+      belief_emit_rate: 0.5,
+      ...(overrides.belief_quality || {}),
+    },
+  };
+}
+
+// === default gates pass on a clean scorecard ===
+{
+  const r = evaluateGates(scorecard());
+  assert.equal(r.pass, true, formatGateReport(r));
+  assert.equal(r.hard_failures.length, 0);
+  assert.equal(r.soft_warnings.length, 0);
+}
+
+// === valid_json_rate below floor: HARD fail ===
+{
+  const r = evaluateGates(scorecard({ prompt_following: { valid_json_rate: 0.5 } }));
+  assert.equal(r.pass, false);
+  assert.equal(r.hard_failures.length, 1);
+  assert.equal(r.hard_failures[0].label, "valid_json_rate_min");
+}
+
+// === action_in_phase_rate below floor: HARD fail ===
+{
+  const r = evaluateGates(scorecard({ prompt_following: { action_in_phase_rate: 0.8 } }));
+  assert.equal(r.pass, false);
+  assert.equal(r.hard_failures[0].label, "action_in_phase_rate_min");
+}
+
+// === http_error_rate above ceiling: HARD fail ===
+{
+  const r = evaluateGates(scorecard({ prompt_following: { http_error_rate: 0.5 } }));
+  assert.equal(r.pass, false);
+  assert.equal(r.hard_failures[0].label, "http_error_rate_max");
+}
+
+// === incomplete_rate above ceiling: HARD fail ===
+{
+  const r = evaluateGates(scorecard({ game_shape: { incomplete_rate: 0.5 } }));
+  assert.equal(r.pass, false);
+  assert.equal(r.hard_failures[0].label, "incomplete_rate_max");
+}
+
+// === multiple failures accumulate ===
+{
+  const r = evaluateGates(
+    scorecard({
+      prompt_following: { valid_json_rate: 0.2, action_in_phase_rate: 0.2, http_error_rate: 0.9 },
+      game_shape: { incomplete_rate: 0.99 },
+    }),
+  );
+  assert.equal(r.pass, false);
+  assert.equal(r.hard_failures.length, 4);
+}
+
+// === profile override loosens a gate ===
+{
+  const r = evaluateGates(
+    scorecard({ prompt_following: { valid_json_rate: 0.6 } }),
+    { valid_json_rate_min: 0.5 },
+  );
+  assert.equal(r.pass, true);
+  assert.equal(r.gates.valid_json_rate_min, 0.5);
+}
+
+// === profile.skip bypasses everything ===
+{
+  const r = evaluateGates(
+    scorecard({ prompt_following: { valid_json_rate: 0 } }),
+    { skip: true },
+  );
+  assert.equal(r.pass, true);
+  assert.equal(r.skipped, true);
+  assert.equal(r.hard_failures.length, 0);
+}
+
+// === belief_emit_rate is a SOFT gate when min > 0 ===
+{
+  const r = evaluateGates(
+    scorecard({ belief_quality: { belief_emit_rate: 0.1 } }),
+    { belief_emit_rate_min: 0.5 },
+  );
+  assert.equal(r.pass, true, "belief_emit_rate is soft");
+  assert.equal(r.soft_warnings.length, 1);
+  assert.equal(r.soft_warnings[0].label, "belief_emit_rate_min");
+}
+
+// === village_winrate_band as soft band check ===
+{
+  const r = evaluateGates(
+    scorecard({ game_shape: { village_winrate: 0.9 } }),
+    { village_winrate_band: [0.5, 0.2] },
+  );
+  assert.equal(r.pass, true);
+  assert.equal(r.soft_warnings.length, 1);
+  assert.equal(r.soft_warnings[0].label, "village_winrate_band");
+  assert.equal(r.soft_warnings[0].actual, 0.9);
+  assert.equal(r.soft_warnings[0].expected, 0.5);
+  assert.equal(r.soft_warnings[0].tolerance, 0.2);
+}
+
+// === village_winrate_band within tolerance does not warn ===
+{
+  const r = evaluateGates(
+    scorecard({ game_shape: { village_winrate: 0.6 } }),
+    { village_winrate_band: [0.5, 0.2] },
+  );
+  assert.equal(r.soft_warnings.length, 0);
+}
+
+// === avg_rounds_band ===
+{
+  const r = evaluateGates(
+    scorecard({ game_shape: { avg_rounds: 10 } }),
+    { avg_rounds_band: [4, 2] },
+  );
+  assert.equal(r.soft_warnings.length, 1);
+  assert.equal(r.soft_warnings[0].label, "avg_rounds_band");
+}
+
+// === DEFAULT_GATES export is frozen and complete ===
+assert.equal(Object.isFrozen(DEFAULT_GATES), true);
+assert.equal(typeof DEFAULT_GATES.valid_json_rate_min, "number");
+assert.equal(typeof DEFAULT_GATES.action_in_phase_rate_min, "number");
+
+// === formatGateReport produces non-empty text for both pass and fail ===
+{
+  const passText = formatGateReport(evaluateGates(scorecard()));
+  assert.match(passText, /PASS/);
+  const failText = formatGateReport(
+    evaluateGates(scorecard({ prompt_following: { valid_json_rate: 0 } })),
+  );
+  assert.match(failText, /FAIL/);
+  assert.match(failText, /valid_json_rate_min/);
+}
+
+// === missing fields treated as failures (defensive) ===
+{
+  const r = evaluateGates({ prompt_following: {}, game_shape: {}, belief_quality: {} });
+  assert.equal(r.pass, false);
+  assert.ok(r.hard_failures.length >= 1);
+}
+
+console.log("ok - eval-gates");

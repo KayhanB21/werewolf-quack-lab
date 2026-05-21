@@ -284,7 +284,8 @@ container/  scripts that run INSIDE Docker player and gateway containers
 lib/        importable / sourceable modules
             (lab-web-actions.mjs, lab-span.sh, mint-token.sh,
              generate-compose.sh)
-eval/       eval framework (aggregate.mjs, run.mjs, profiles/, runs/)
+eval/       eval framework (aggregate.mjs, gates.mjs, run.mjs,
+            profiles/, baselines/, fixtures/, runs/)
 tests/      every test suite (agent-act.sh, mint-token.sh, lab-authz.sh,
             lab-span.sh, generated-compose.sh, lab-web.mjs,
             eval-aggregate.mjs, eval-run.mjs)
@@ -311,6 +312,13 @@ on stdout. The orchestrator (`bin/lab-web-server.mjs`) parses these via
 legality for the phase, finish reason, prompt / completion / reasoning
 token counts, wall-clock latency, suspicion / knowledge counts, and a
 truncated `reasoning_content`.
+
+`eval/gates.mjs` defines hard and soft regression gates. `eval/run.mjs`
+evaluates them after aggregation and exits non-zero on hard failure;
+each profile can override defaults under a `gates` block (or set
+`skip: true`). Committed JSONL fixtures live under `eval/fixtures/`
+and the `tests/eval-aggregate.mjs` suite asserts that the aggregator
+output for those fixtures matches `eval/baselines/fixtures.json`.
 
 See `docs/eval-plan.md` for the metric taxonomy, prior-art survey, and
 phased rollout. See `docs/implementation-status.md` for what's currently

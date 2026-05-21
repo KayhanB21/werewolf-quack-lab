@@ -221,6 +221,7 @@ make web-dev    Start the browser runner with file watching and browser reload
 make web-test   Run the orchestrator unit checks (tests/lab-web.mjs)
 make eval-test  Run the eval framework unit checks
 make eval-run PROFILE=eval/profiles/<name>.json  Run a batch eval profile
+make eval-large Run the 50-game omlx variance profile
 make test       Run agent, generator, web, eval, and real Quack smoke checks
 make down       Stop the generated lab
 ```

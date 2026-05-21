@@ -25,10 +25,24 @@ The eval framework is now built and tested. Highlights:
   metric correctness, edge cases (empty / malformed / missing fields),
   end-to-end via mock HTTP, and HTTP failure paths.
 
+**Landed since the original plan:**
+
+- `eval/gates.mjs` — hard / soft regression gates with per-profile overrides;
+  wired into `eval/run.mjs` (exits non-zero on hard failure, writes
+  `gates.json` alongside `scorecard.json`); tested in `tests/eval-gates.mjs`.
+- `eval/fixtures/{village-win,wolf-win,malformed-turn-stats}.jsonl` —
+  committed reference game logs. `tests/eval-aggregate.mjs` loads them from
+  disk and asserts that `aggregate(...)` matches the committed
+  `eval/baselines/fixtures.json` exactly.
+- `eval/baselines/fixtures.json` — deterministic baseline of the fixtures
+  aggregate. See `eval/baselines/README.md` for the regeneration recipe.
+- `eval/profiles/omlx-large.json` — 50-game omlx variance-analysis profile,
+  wired via `make eval-large`.
+
 **Not yet built (in this plan but deferred):** promptfoo wiring, the
 Anthropic provider branch in `container/agent-act.sh`, LLM-as-judge
-deception metrics, `eval/baselines/` committed reference scorecards,
-larger-N profiles.
+deception metrics, committed live-run baseline for `stub-smoke` (lazy;
+requires Docker), `openai-mini` / `anthropic-haiku` profiles.
 
 The rest of this document is the original design discussion — useful for
 understanding why we chose this architecture and what's planned for the

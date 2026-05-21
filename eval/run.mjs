@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile, copyFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { aggregate, formatScorecardSummary, loadGameLogs } from "./aggregate.mjs";
+import { evaluateGates, formatGateReport } from "./gates.mjs";
 
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -48,6 +49,7 @@ export function validateProfile(profile) {
     max_tokens: profile.max_tokens ?? 260,
     base_url: profile.base_url ?? "",
     api_key_env: profile.api_key_env ?? "",
+    gates: profile.gates ?? null,
   };
 }
 
@@ -182,15 +184,18 @@ export async function runProfile(profile, opts = {}) {
   }
 
   let scorecard = null;
+  let gateReport = null;
   if (collectedLogs.length > 0) {
     const games = await loadGameLogs(writeOut ? outDir : collectedLogs[0]);
     scorecard = aggregate(games);
+    gateReport = evaluateGates(scorecard, validated.gates);
     if (writeOut) {
       await writeFile(path.join(outDir, "scorecard.json"), `${JSON.stringify(scorecard, null, 2)}\n`);
+      await writeFile(path.join(outDir, "gates.json"), `${JSON.stringify(gateReport, null, 2)}\n`);
     }
   }
 
-  return { profile: validated, results, scorecard, outDir };
+  return { profile: validated, results, scorecard, gateReport, outDir };
 }
 
 const isMain = import.meta.url === `file://${process.argv[1]}`;
@@ -216,8 +221,13 @@ if (isMain) {
   if (result.scorecard) {
     console.error("");
     console.error(formatScorecardSummary(result.scorecard));
+    if (result.gateReport) {
+      console.error("");
+      console.error(formatGateReport(result.gateReport));
+      if (!result.gateReport.pass) process.exit(1);
+    }
   } else {
-    console.error("[eval-run] no game logs collected — see results above");
+    console.error("[eval-run] no game logs collected. see results above");
     process.exit(1);
   }
 }

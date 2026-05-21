@@ -63,10 +63,19 @@ lib/        # importable / sourceable modules
 
 eval/       # eval framework
   aggregate.mjs           # pure aggregator + CLI
+  gates.mjs               # hard/soft regression gates + CLI
   run.mjs                 # batch runner against /api/run, with concurrency
   profiles/
     stub-smoke.json       # 3-game scripted pipeline sanity profile
     omlx-qwen35.json      # 10-game Qwen3.5 profile with thinking_budget=400
+    omlx-large.json       # 50-game variance-analysis profile
+  baselines/
+    fixtures.json         # deterministic aggregate of eval/fixtures/
+    README.md             # how to regenerate baselines
+  fixtures/               # committed JSONL game logs for unit tests
+    village-win.jsonl
+    wolf-win.jsonl
+    malformed-turn-stats.jsonl
   runs/                   # per-run output dirs (<profile>-<stamp>/)
 
 tests/      # all test suites
@@ -77,6 +86,7 @@ tests/      # all test suites
   generated-compose.sh
   lab-web.mjs
   eval-aggregate.mjs
+  eval-gates.mjs
   eval-run.mjs
 
 docs/       # roadmap, architecture, eval-plan, this status
@@ -214,6 +224,20 @@ explicitly.
 - **Configurable wolf rotation cap**: `wolfRotationCap` in the HTTP body
   (clamped to [1, 6], default 3). Threaded from `eval/run.mjs` profiles via
   `wolf_rotation_cap`.
+- **Regression gates** (`eval/gates.mjs`): hard floors on `valid_json_rate`,
+  `action_in_phase_rate`, and hard ceilings on `http_error_rate` and
+  `incomplete_rate`. Soft band checks on `village_winrate` and `avg_rounds`
+  (require a per-profile baseline center+tolerance, off by default). Each
+  profile can override defaults under a `gates` block, including `skip:
+  true` for diagnostic runs. `eval/run.mjs` evaluates gates after
+  aggregation, writes `gates.json`, and exits non-zero on hard failure.
+- **Fixtures + committed baseline**: `eval/fixtures/{village-win,wolf-win,
+  malformed-turn-stats}.jsonl` are the canonical reference logs;
+  `tests/eval-aggregate.mjs` asserts the aggregator output matches
+  `eval/baselines/fixtures.json` byte-for-byte after stripping the two
+  non-deterministic fields (`meta.generated_at`, `per_game[].path`). Any
+  aggregator change that shifts a metric trips this test loudly. The
+  baseline regeneration recipe is in `eval/baselines/README.md`.
 
 ## Tested-against-omlx end to end
 

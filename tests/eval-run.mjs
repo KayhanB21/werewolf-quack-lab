@@ -219,6 +219,12 @@ try {
   // scorecard.json was written
   const written = JSON.parse(await readFile(join(outDir, "scorecard.json"), "utf8"));
   assert.equal(written.meta.game_count, 3);
+
+  // gates were evaluated and gates.json was written
+  assert.ok(result.gateReport, "runProfile returns a gateReport");
+  assert.equal(result.gateReport.pass, true, "stub-mocked games hit every gate");
+  const gatesWritten = JSON.parse(await readFile(join(outDir, "gates.json"), "utf8"));
+  assert.equal(gatesWritten.pass, true);
 } finally {
   await rm(tmpDir, { recursive: true, force: true });
 }
@@ -257,6 +263,94 @@ try {
   assert.equal(result.scorecard, null, "no scorecard when no games complete");
 } finally {
   await rm(failTmp, { recursive: true, force: true });
+}
+
+// === gate failure flows through runProfile ===
+{
+  const tmpGate = await mkdtemp(join(tmpdir(), "eval-run-gate-"));
+  try {
+    const fakeLog = join(tmpGate, "fake.jsonl");
+    // Construct a log that will FAIL the http_error_rate gate: 100% http-error.
+    const events = [
+      { kind: "game-start", game_id: "x", provider: "stub", model: "s", players: [{ id: "p1", role: "wolf" }] },
+      {
+        kind: "turn-stats",
+        agent: "p1",
+        role: "wolf",
+        phase: "day",
+        round: 1,
+        provider: "stub",
+        model: "s",
+        parse_path: "http-error",
+        valid_json: false,
+        action_in_phase: false,
+        http_status: "error",
+        tokens: { prompt: 0, completion: 0, reasoning: 0 },
+        latency_ms: 1,
+        suspicions_count: 0,
+        knowledge_count: 0,
+      },
+      { kind: "game-end", winner: "village", reason: "x", rounds: 1 },
+    ];
+    await writeFile(fakeLog, events.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    const server = createServer((req, res) => {
+      res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+      res.write(`${JSON.stringify({ type: "start" })}\n`);
+      res.write(
+        `${JSON.stringify({
+          type: "stdout",
+          data: `[${JSON.stringify({ winner: "village", reason: "x", rounds: 1, alive: [], eliminated: [], history: [], durable_log: fakeLog })}]\n`,
+        })}\n`,
+      );
+      res.write(`${JSON.stringify({ type: "done", ok: true })}\n`);
+      res.end();
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = server.address().port;
+
+    const profile = {
+      name: "gate-fail",
+      provider: "stub",
+      model: "stub-werewolf-v1",
+      game_count: 1,
+      players: [
+        { id: "p1", role: "wolf" },
+        { id: "p2", role: "seer" },
+        { id: "p3", role: "doctor" },
+      ],
+    };
+    const result = await runProfile(profile, { server: `http://127.0.0.1:${port}`, outDir: join(tmpGate, "out") });
+    server.close();
+    assert.ok(result.gateReport);
+    assert.equal(result.gateReport.pass, false);
+    assert.ok(
+      result.gateReport.hard_failures.some((h) => h.label === "http_error_rate_max"),
+      `expected http_error_rate_max in hard_failures, got: ${JSON.stringify(result.gateReport.hard_failures)}`,
+    );
+
+    // profile-level skip overrides
+    const skipProfile = { ...profile, name: "gate-skip", gates: { skip: true } };
+    const server2 = createServer((req, res) => {
+      res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+      res.write(`${JSON.stringify({ type: "start" })}\n`);
+      res.write(
+        `${JSON.stringify({
+          type: "stdout",
+          data: `[${JSON.stringify({ winner: "village", reason: "x", rounds: 1, alive: [], eliminated: [], history: [], durable_log: fakeLog })}]\n`,
+        })}\n`,
+      );
+      res.write(`${JSON.stringify({ type: "done", ok: true })}\n`);
+      res.end();
+    });
+    await new Promise((resolve) => server2.listen(0, "127.0.0.1", resolve));
+    const port2 = server2.address().port;
+    const skipResult = await runProfile(skipProfile, { server: `http://127.0.0.1:${port2}`, outDir: join(tmpGate, "out2") });
+    server2.close();
+    assert.equal(skipResult.gateReport.skipped, true);
+    assert.equal(skipResult.gateReport.pass, true);
+  } finally {
+    await rm(tmpGate, { recursive: true, force: true });
+  }
 }
 
 console.log("ok - eval-run profile validation and HTTP orchestration");

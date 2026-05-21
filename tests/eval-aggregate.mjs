@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   aggregate,
   formatScorecardSummary,
@@ -10,6 +11,11 @@ import {
   parseGameLog,
   summarizeGame,
 } from "../eval/aggregate.mjs";
+
+const FIXTURES_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "eval", "fixtures");
+async function loadFixture(name) {
+  return parseGameLog(await readFile(join(FIXTURES_DIR, name), "utf8"));
+}
 
 // === unit: parseGameLog ===
 assert.deepEqual(parseGameLog(""), []);
@@ -28,70 +34,7 @@ assert.equal(parsed[0].kind, "game-start");
 assert.equal(parsed[1].round, 1);
 
 // === unit: summarizeGame ===
-const fixtureEvents = [
-  {
-    ts: "2026-05-19T00:00:00Z",
-    kind: "game-start",
-    game_id: "g1",
-    provider: "omlx",
-    model: "qwen",
-    players: [
-      { id: "p1", role: "wolf" },
-      { id: "p2", role: "wolf" },
-      { id: "p3", role: "seer" },
-      { id: "p4", role: "doctor" },
-      { id: "p5", role: "villager" },
-    ],
-  },
-  { kind: "round-start", round: 1, alive: ["p1", "p2", "p3", "p4", "p5"] },
-  {
-    kind: "turn-stats",
-    agent: "p1",
-    role: "wolf",
-    phase: "day",
-    round: 1,
-    provider: "omlx",
-    model: "qwen",
-    parse_path: "object",
-    valid_json: true,
-    raw_action: "speak",
-    normalized_action: "speak",
-    action_in_phase: true,
-    finish_reason: "stop",
-    http_status: "200",
-    tokens: { prompt: 600, completion: 200, reasoning: 80 },
-    latency_ms: 3000,
-    suspicions_count: 1,
-    knowledge_count: 0,
-  },
-  {
-    kind: "turn-stats",
-    agent: "p3",
-    role: "seer",
-    phase: "day",
-    round: 1,
-    provider: "omlx",
-    model: "qwen",
-    parse_path: "text",
-    valid_json: false,
-    raw_action: "speak",
-    normalized_action: "speak",
-    action_in_phase: true,
-    finish_reason: "length",
-    http_status: "200",
-    tokens: { prompt: 600, completion: 260, reasoning: 0 },
-    latency_ms: 9000,
-    suspicions_count: 0,
-    knowledge_count: 0,
-  },
-  { kind: "seer-learn", round: 1, agent: "p3", target: "p1", role: "wolf" },
-  { kind: "wolf-kill", round: 1, target: "p5", role: "villager" },
-  { kind: "no-lynch", round: 1, tied: ["p1", "p2"], votes: 2 },
-  { kind: "round-start", round: 2, alive: ["p1", "p2", "p3", "p4"] },
-  { kind: "wolf-saved", round: 2, target: "p3" },
-  { kind: "lynch", round: 2, target: "p1", votes: 3, revealed_role: "wolf" },
-  { kind: "game-end", winner: "village", reason: "all wolves eliminated", rounds: 2 },
-];
+const fixtureEvents = await loadFixture("village-win.jsonl");
 const summary = summarizeGame(fixtureEvents);
 assert.equal(summary.game_id, "g1");
 assert.equal(summary.provider, "omlx");
@@ -110,57 +53,8 @@ assert.equal(summary.rounds_played, 2);
 assert.equal(summary.completed, true);
 
 // === unit: aggregate with two games ===
-const incompleteEvents = [
-  { kind: "game-start", game_id: "g2", provider: "omlx", model: "qwen", players: [{ id: "p1", role: "wolf" }, { id: "p2", role: "villager" }] },
-  { kind: "round-start", round: 1, alive: ["p1", "p2"] },
-  {
-    kind: "turn-stats",
-    agent: "p1",
-    role: "wolf",
-    phase: "day",
-    round: 1,
-    provider: "omlx",
-    model: "qwen",
-    parse_path: "http-error",
-    valid_json: false,
-    raw_action: "",
-    normalized_action: "speak",
-    action_in_phase: true,
-    finish_reason: "",
-    http_status: "error",
-    tokens: { prompt: 0, completion: 0, reasoning: 0 },
-    latency_ms: 30000,
-    suspicions_count: 0,
-    knowledge_count: 0,
-  },
-];
-
-const stubWinForWolves = [
-  { kind: "game-start", game_id: "g3", provider: "stub", model: "stub-werewolf-v1", players: [{ id: "p1", role: "wolf" }, { id: "p2", role: "villager" }] },
-  { kind: "round-start", round: 1, alive: ["p1", "p2"] },
-  {
-    kind: "turn-stats",
-    agent: "p1",
-    role: "wolf",
-    phase: "day",
-    round: 1,
-    provider: "stub",
-    model: "stub",
-    parse_path: "stub",
-    valid_json: true,
-    raw_action: "speak",
-    normalized_action: "speak",
-    action_in_phase: true,
-    finish_reason: "",
-    http_status: "",
-    tokens: { prompt: 0, completion: 0, reasoning: 0 },
-    latency_ms: 5,
-    suspicions_count: 0,
-    knowledge_count: 1,
-  },
-  { kind: "wolf-kill", round: 1, target: "p2", role: "villager" },
-  { kind: "game-end", winner: "wolves", reason: "wolves outnumber villagers", rounds: 1 },
-];
+const incompleteEvents = await loadFixture("malformed-turn-stats.jsonl");
+const stubWinForWolves = await loadFixture("wolf-win.jsonl");
 
 const games = [
   { path: "g1.jsonl", events: fixtureEvents },
@@ -285,6 +179,22 @@ try {
   assert.equal(singleLoaded[0].events.length, fixtureEvents.length);
 } finally {
   await rm(tmpDir, { recursive: true, force: true });
+}
+
+// === baseline regression: aggregating committed fixtures must match the committed scorecard ===
+{
+  const games = await loadGameLogs(FIXTURES_DIR);
+  const sc = aggregate(games);
+  delete sc.meta.generated_at;
+  for (const g of sc.per_game) delete g.path;
+
+  const baselinePath = resolve(FIXTURES_DIR, "..", "baselines", "fixtures.json");
+  const baseline = JSON.parse(await readFile(baselinePath, "utf8"));
+  assert.deepEqual(
+    sc,
+    baseline,
+    `eval/baselines/fixtures.json drifted from aggregator output. Regenerate with:\n  node -e "import('./eval/aggregate.mjs').then(async m=>{const g=await m.loadGameLogs('eval/fixtures');const s=m.aggregate(g);delete s.meta.generated_at;for(const x of s.per_game)delete x.path;process.stdout.write(JSON.stringify(s,null,2)+'\\n')})" > eval/baselines/fixtures.json`,
+  );
 }
 
 console.log("ok - eval-aggregate metrics and IO");

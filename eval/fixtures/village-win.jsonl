@@ -1,0 +1,11 @@
+{"ts":"2026-05-19T00:00:00Z","kind":"game-start","game_id":"g1","provider":"omlx","model":"qwen","players":[{"id":"p1","role":"wolf"},{"id":"p2","role":"wolf"},{"id":"p3","role":"seer"},{"id":"p4","role":"doctor"},{"id":"p5","role":"villager"}]}
+{"kind":"round-start","round":1,"alive":["p1","p2","p3","p4","p5"]}
+{"kind":"turn-stats","agent":"p1","role":"wolf","phase":"day","round":1,"provider":"omlx","model":"qwen","parse_path":"object","valid_json":true,"raw_action":"speak","normalized_action":"speak","action_in_phase":true,"finish_reason":"stop","http_status":"200","tokens":{"prompt":600,"completion":200,"reasoning":80},"latency_ms":3000,"suspicions_count":1,"knowledge_count":0}
+{"kind":"turn-stats","agent":"p3","role":"seer","phase":"day","round":1,"provider":"omlx","model":"qwen","parse_path":"text","valid_json":false,"raw_action":"speak","normalized_action":"speak","action_in_phase":true,"finish_reason":"length","http_status":"200","tokens":{"prompt":600,"completion":260,"reasoning":0},"latency_ms":9000,"suspicions_count":0,"knowledge_count":0}
+{"kind":"seer-learn","round":1,"agent":"p3","target":"p1","role":"wolf"}
+{"kind":"wolf-kill","round":1,"target":"p5","role":"villager"}
+{"kind":"no-lynch","round":1,"tied":["p1","p2"],"votes":2}
+{"kind":"round-start","round":2,"alive":["p1","p2","p3","p4"]}
+{"kind":"wolf-saved","round":2,"target":"p3"}
+{"kind":"lynch","round":2,"target":"p1","votes":3,"revealed_role":"wolf"}
+{"kind":"game-end","winner":"village","reason":"all wolves eliminated","rounds":2}
