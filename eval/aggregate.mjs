@@ -67,6 +67,15 @@ function bumpHist(hist, key) {
   hist[k] = (hist[k] || 0) + 1;
 }
 
+// Coerce any numeric input to a finite, non-negative number. Used at the
+// turn-stats boundary so that hostile or buggy upstream values (NaN,
+// Infinity, negatives) cannot poison aggregate metrics.
+function safeNonNegative(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
+}
+
 export function summarizeGame(events) {
   const out = {
     game_id: "",
@@ -240,18 +249,18 @@ export function aggregate(games) {
       bumpHist(scorecard.prompt_following.finish_reason_histogram, ts.finish_reason);
       bumpHist(scorecard.prompt_following.raw_action_histogram, ts.raw_action || ts.normalized_action);
 
-      const lat = Number(ts.latency_ms) || 0;
+      const lat = safeNonNegative(ts.latency_ms);
       if (lat > 0) latencies.push(lat);
-      const pt = ts.tokens?.prompt ?? 0;
-      const ct = ts.tokens?.completion ?? 0;
-      const rt = ts.tokens?.reasoning ?? 0;
+      const pt = safeNonNegative(ts.tokens?.prompt);
+      const ct = safeNonNegative(ts.tokens?.completion);
+      const rt = safeNonNegative(ts.tokens?.reasoning);
       if (pt > 0 || ct > 0 || rt > 0) {
         promptTokens.push(pt);
         completionTokens.push(ct);
         reasoningTokens.push(rt);
       }
-      const sc = Number(ts.suspicions_count) || 0;
-      const kc = Number(ts.knowledge_count) || 0;
+      const sc = safeNonNegative(ts.suspicions_count);
+      const kc = safeNonNegative(ts.knowledge_count);
       suspicionsPerTurn.push(sc);
       knowledgePerTurn.push(kc);
       beliefEmitFlags.push(sc + kc > 0 ? 1 : 0);

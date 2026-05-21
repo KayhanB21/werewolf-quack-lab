@@ -93,6 +93,7 @@ tests/      # all test suites
   eval-aggregate.mjs
   eval-gates.mjs
   eval-run.mjs
+  eval-deep.mjs           # multi-step scenarios: lifecycle, races, hostile inputs
 
 docs/       # roadmap, architecture, eval-plan, this status
 ```
@@ -243,6 +244,22 @@ explicitly.
   seeded within-game event shuffles and asserts the scorecard is
   byte-identical, so any new aggregator state that introduces an event
   ordering dependency trips the test loudly.
+- **Deep multi-step coverage** (`tests/eval-deep.mjs`): 9 scenarios that
+  each chain at least three steps. Locks in: (1) mutating a single
+  game-end winner shifts only `game_shape`, never `prompt_following` /
+  `performance` / `belief_quality`; (2) `runProfile` at concurrency=4 with
+  randomized server delays still produces `results[i].gameIndex === i`;
+  (3) hostile numeric inputs (`NaN`, `Infinity`, negative, strings,
+  `tokens: null`) all clamp to 0 in the scorecard via the
+  `safeNonNegative` boundary helper; (4) multiple `game-start` events
+  in one log are latest-wins and do not double-count rounds; (5)
+  `game-end` before `game-start` still summarizes correctly; (6) a
+  missing durable-log file produces a per-result `copy_error` and a
+  partial scorecard from games that did succeed; (7) `extractDurableLogPath`
+  and `extractDoneOk` skip non-JSON noise interspersed with valid lines;
+  (8) gate precedence `default <- baseline-derived <- profile` including
+  profile-explicit `null` deleting a baseline-derived band and
+  `skip: true` defeating all hard floors.
 - **Fixtures + committed baseline**: `eval/fixtures/{village-win,wolf-win,
   malformed-turn-stats}.jsonl` are the canonical reference logs;
   `tests/eval-aggregate.mjs` asserts the aggregator output matches

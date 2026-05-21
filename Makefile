@@ -25,6 +25,7 @@ eval-test:
 	node ./tests/eval-aggregate.mjs
 	node ./tests/eval-gates.mjs
 	node ./tests/eval-run.mjs
+	node ./tests/eval-deep.mjs
 
 eval-run:
 	@if [ -z "$(PROFILE)" ]; then echo "usage: make eval-run PROFILE=eval/profiles/stub-smoke.json"; exit 1; fi

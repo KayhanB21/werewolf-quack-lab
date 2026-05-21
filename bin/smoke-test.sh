@@ -12,4 +12,5 @@ node "${ROOT_DIR}/tests/lab-web.mjs"
 node "${ROOT_DIR}/tests/eval-aggregate.mjs"
 node "${ROOT_DIR}/tests/eval-gates.mjs"
 node "${ROOT_DIR}/tests/eval-run.mjs"
+node "${ROOT_DIR}/tests/eval-deep.mjs"
 "${ROOT_DIR}/bin/labctl" smoke
