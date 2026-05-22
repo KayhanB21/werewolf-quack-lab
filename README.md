@@ -152,6 +152,17 @@ Compose file is not source controlled.
 Because the player agents run inside Docker, they reach the host server through
 `host.docker.internal`.
 
+The local OMLX path is the default engine for live evals. For repeatable local
+development, `.env.example` documents:
+
+```bash
+OMLX_API_KEY=1234
+OMLX_BASE_URL=http://localhost:8000/v1
+```
+
+`1234` is only a local development key for your own OMLX server. Do not reuse it
+as a production secret.
+
 Start oMLX on the host:
 
 ```bash
@@ -164,17 +175,25 @@ or run the CLI server directly:
 omlx serve --model-dir ~/models
 ```
 
-Then run the optional integration smoke:
+Verify that the server is reachable and has a model:
 
 ```bash
-./bin/omlx-smoke-test.sh
+curl -sS -H "Authorization: Bearer ${OMLX_API_KEY}" http://localhost:8000/v1/models
 ```
 
-If oMLX API key authentication is enabled, set `OMLX_API_KEY` or `LLM_API_KEY`
-before running the script. The script checks `/v1/models`, chooses the first
-model unless `OMLX_MODEL` is set, generates a three-player config, asks each
-container-local agent to act through oMLX, and then runs the same Quack gateway
-assertions as the deterministic smoke.
+Then run the canonical local OMLX smoke and daily eval:
+
+```bash
+make eval-omlx-smoke
+make eval-mini
+```
+
+The make targets preflight `/v1/models` with `OMLX_API_KEY` before starting a
+live run. The smoke target chooses the first model unless `OMLX_MODEL` is set,
+generates a three-player config, asks each container-local agent to act through
+oMLX, and then runs the same Quack gateway assertions as the deterministic
+smoke. Profile eval targets such as `make eval-mini`, `make eval-hot`, and
+`make eval-all-omlx` preflight the model configured in the selected profile.
 
 The model response is treated as a proposal, not as trusted SQL input. Before
 `container/agent-act.sh` writes to DuckDB, it normalizes the action for the
@@ -223,7 +242,9 @@ make eval-test  Run the eval framework unit checks
 make eval-run PROFILE=eval/profiles/<name>.json  Run a batch eval profile
 make eval-report Compare eval/runs into Markdown and JSON
 make eval-matrix Run the promptfoo matrix (requires npm install + running web server)
+make eval-matrix-node24 Run the promptfoo matrix through one-off Node 24
 make eval-inspect-test  Syntax-check the Inspect wrapper through uv
+make eval-omlx-smoke  Preflight local OMLX, then run the keyed smoke
 make eval-large Run the 50-game omlx variance profile
 make eval-mini  Run the 5-game / 3-player omlx daily smoke
 make eval-nothink   Run the thinking_budget=0 omlx counterfactual
@@ -242,6 +263,12 @@ Research-grade eval details live in `docs/research-eval-plan.md`. The local
 `make eval-run PROFILE=...`, then use `eval/report.ts` to compare scorecards.
 Each run directory contains `manifest.json`, `scorecard.json`, `gates.json`, and
 copied durable game logs.
+
+Promptfoo is available as a comparison orchestrator with stable provider labels
+for `stub`, `omlx-mini`, `omlx-default`, `omlx-nothink`, `omlx-hot`, and
+`omlx-7p`. Use `make eval-matrix` with the installed Node runtime. If promptfoo's
+SQLite dependency fails on a newer Node version, use `make eval-matrix-node24`
+or `npm run eval:matrix:node24`.
 
 `full_log` reads from `post_game_intents`. By default the player nodes start with
 `POST_GAME=false`, so the view returns no rows. Set `POST_GAME=true` before

@@ -1,22 +1,50 @@
-description: "werewolf-quack-lab research eval matrix"
+description: "werewolf-quack-lab provider/profile comparison matrix"
+# Keep local OMLX serialized. Model-server concurrency can distort latency,
+# timeout, and failure-rate metrics; use a dedicated benchmark for concurrency.
 maxConcurrency: 1
 
 prompts:
-  - "Run the werewolf eval profile {{profile}}"
+  - "Run the configured werewolf eval profile."
 
 providers:
   - id: file://providers/werewolf-run.ts
-    label: local-omlx-mini
+    label: stub
+    config:
+      profile: eval/profiles/stub-smoke.json
+      provider: stub
+      model: stub-werewolf-v1
+      server: http://localhost:5174
+
+  - id: file://providers/werewolf-run.ts
+    label: omlx-mini
     config:
       profile: eval/profiles/omlx-qwen35-mini.json
       server: http://localhost:5174
 
+  - id: file://providers/werewolf-run.ts
+    label: omlx-default
+    config:
+      profile: eval/profiles/omlx-qwen35.json
+      server: http://localhost:5174
+
+  - id: file://providers/werewolf-run.ts
+    label: omlx-nothink
+    config:
+      profile: eval/profiles/omlx-qwen35-nothink.json
+      server: http://localhost:5174
+
+  - id: file://providers/werewolf-run.ts
+    label: omlx-hot
+    config:
+      profile: eval/profiles/omlx-qwen35-hot.json
+      server: http://localhost:5174
+
+  - id: file://providers/werewolf-run.ts
+    label: omlx-7p
+    config:
+      profile: eval/profiles/omlx-qwen35-7p.json
+      server: http://localhost:5174
+
 tests:
-  - description: "local omlx daily research smoke"
-    vars:
-      profile: eval/profiles/omlx-qwen35-mini.json
-      game_count: 1
-  - description: "stub pipeline sanity"
-    vars:
-      profile: eval/profiles/stub-smoke.json
-      game_count: 1
+  - description: "run configured profile and return scorecard metadata"
+    vars: {}

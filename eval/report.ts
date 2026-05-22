@@ -9,6 +9,7 @@ type RunSummary = {
   dir: string;
   manifest: Record<string, unknown>;
   scorecard: Scorecard;
+  gates: Record<string, unknown> | null;
   ci: {
     village_winrate: ConfidenceInterval;
     wolves_winrate: ConfidenceInterval;
@@ -17,13 +18,16 @@ type RunSummary = {
 type ReportRow = {
   run: string;
   scenario: string;
+  profile: string;
   provider: string;
   model: string;
+  gates: string;
   games: number;
   completed: number;
   valid_json_rate: number;
   target_override_rate: number;
   village_winrate: number;
+  delta_village_winrate: number;
   village_winrate_ci: ConfidenceInterval;
   deception_production_rate: number | null;
   deception_detection_f1: number | null;
@@ -97,6 +101,8 @@ async function loadRun(dir: string): Promise<RunSummary> {
   const scorecard = JSON.parse(await readFile(path.join(dir, "scorecard.json"), "utf8")) as Scorecard;
   const parsedManifest = JSON.parse(await readFile(path.join(dir, "manifest.json"), "utf8").catch(() => "{}")) as unknown;
   const manifest = isRecord(parsedManifest) ? parsedManifest : {};
+  const parsedGates = JSON.parse(await readFile(path.join(dir, "gates.json"), "utf8").catch(() => "null")) as unknown;
+  const gates = isRecord(parsedGates) ? parsedGates : null;
   const villageValues = (scorecard.per_game || [])
     .filter((g: Scorecard["per_game"][number]) => g.completed)
     .map((g: Scorecard["per_game"][number]) => (g.winner === "village" ? 1 : 0));
@@ -107,6 +113,7 @@ async function loadRun(dir: string): Promise<RunSummary> {
     dir,
     manifest,
     scorecard,
+    gates,
     ci: {
       village_winrate: bootstrapBinaryCi(villageValues),
       wolves_winrate: bootstrapBinaryCi(wolvesValues),
@@ -150,18 +157,23 @@ export async function discoverRuns(targets: string[]): Promise<RunSummary[]> {
 }
 
 export function buildReport(runs: RunSummary[]): ComparisonReport {
+  const baseVillageWinrate = runs[0]?.scorecard.game_shape.village_winrate ?? 0;
   const rows = runs.map((run) => {
     const sc = run.scorecard;
+    const gatesPass = typeof run.gates?.pass === "boolean" ? (run.gates.pass ? "pass" : "fail") : "n/a";
     return {
       run: str(run.manifest.run_id || path.basename(run.dir)),
       scenario: str(run.manifest.scenario_id || run.manifest.profile_name || ""),
+      profile: str(run.manifest.profile_name || ""),
       provider: str(sc.meta.providers.join(",") || run.manifest.provider || ""),
       model: str(sc.meta.models.join(",") || run.manifest.model || ""),
+      gates: gatesPass,
       games: sc.meta.game_count,
       completed: sc.meta.completed_game_count,
       valid_json_rate: sc.prompt_following.valid_json_rate,
       target_override_rate: sc.prompt_following.target_override_rate,
       village_winrate: sc.game_shape.village_winrate,
+      delta_village_winrate: sc.game_shape.village_winrate - baseVillageWinrate,
       village_winrate_ci: run.ci.village_winrate,
       deception_production_rate: sc.deception.deception_production_rate,
       deception_detection_f1: sc.deception.deception_detection_f1,
@@ -184,14 +196,15 @@ export function formatMarkdown(report: ComparisonReport): string {
   lines.push(`Generated: ${report.generated_at}`);
   lines.push("");
   lines.push(
-    "| Run | Scenario | Provider | Games | JSON | Override | Village winrate | Town vote acc. | Deception F1 | Suspicion gap | p95 latency | Tokens |",
+    "| Run | Scenario | Provider | Gates | Games | JSON | Override | Village winrate | Delta | Town vote acc. | Deception F1 | Suspicion gap | p95 latency | Tokens |",
   );
-  lines.push("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+  lines.push("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
   for (const r of report.rows) {
     const ci = r.village_winrate_ci;
     const village = `${pct(r.village_winrate)} [${pct(ci.low)}, ${pct(ci.high)}]`;
+    const delta = `${r.delta_village_winrate >= 0 ? "+" : ""}${pct(r.delta_village_winrate)}`;
     lines.push(
-      `| ${r.run} | ${r.scenario} | ${r.provider} | ${r.completed}/${r.games} | ${pct(r.valid_json_rate)} | ${pct(r.target_override_rate)} | ${village} | ${pct(r.town_vote_accuracy)} | ${pct(r.deception_detection_f1)} | ${num(r.suspicion_gap, 3)} | ${r.p95_latency_ms} | ${r.total_tokens} |`,
+      `| ${r.run} | ${r.scenario} | ${r.provider} | ${r.gates} | ${r.completed}/${r.games} | ${pct(r.valid_json_rate)} | ${pct(r.target_override_rate)} | ${village} | ${delta} | ${pct(r.town_vote_accuracy)} | ${pct(r.deception_detection_f1)} | ${num(r.suspicion_gap, 3)} | ${r.p95_latency_ms} | ${r.total_tokens} |`,
     );
   }
   lines.push("");

@@ -24,16 +24,85 @@ async function listenOnRandomPort(server: Server): Promise<number> {
   return (address as AddressInfo).port;
 }
 
+function validProfile(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    name: "x",
+    provider: "stub",
+    game_count: 1,
+    players: [
+      { id: "p1", role: "wolf" },
+      { id: "p2", role: "seer" },
+      { id: "p3", role: "doctor" },
+    ],
+    ...overrides,
+  };
+}
+
 // === validateProfile ===
 assert.throws(() => validateProfile(null), /must be an object/);
 assert.throws(() => validateProfile({}), /missing required field: name/);
+assert.throws(() => validateProfile(validProfile({ provider: "mystery" })), /provider must be one of/);
 assert.throws(
   () => validateProfile({ name: "x", provider: "stub", game_count: 0, players: [] }),
   /game_count must be a positive integer/,
 );
+assert.throws(() => validateProfile(validProfile({ game_count: 1.5 })), /game_count must be a positive integer/);
+assert.throws(() => validateProfile(validProfile({ concurrency: 0 })), /concurrency must be an integer/);
+assert.throws(() => validateProfile(validProfile({ max_rounds: 0 })), /max_rounds must be an integer/);
+assert.throws(() => validateProfile(validProfile({ thinking_budget: -1 })), /thinking_budget/);
+assert.throws(() => validateProfile(validProfile({ thinking_budget: 1.5 })), /thinking_budget/);
+assert.throws(() => validateProfile(validProfile({ temperature: -0.1 })), /temperature/);
+assert.throws(() => validateProfile(validProfile({ temperature: 3 })), /temperature/);
+assert.throws(() => validateProfile(validProfile({ max_tokens: 0 })), /max_tokens/);
+assert.throws(() => validateProfile(validProfile({ max_tokens: 1.2 })), /max_tokens/);
+assert.throws(() => validateProfile(validProfile({ base_url: "not-url" })), /base_url/);
+assert.throws(() => validateProfile(validProfile({ provider: "omlx", base_url: "http://localhost:8000/v1" })), /api_key_env/);
+assert.throws(
+  () => validateProfile(validProfile({ provider: "omlx", api_key_env: "OMLX_API_KEY", base_url: "nota-url" })),
+  /base_url/,
+);
 assert.throws(
   () => validateProfile({ name: "x", provider: "stub", game_count: 1, players: [{ id: "a", role: "wolf" }] }),
   /at least 3 players/,
+);
+assert.throws(
+  () =>
+    validateProfile(
+      validProfile({
+        players: [
+          { id: "p1", role: "wolf" },
+          { id: "p1", role: "seer" },
+          { id: "p3", role: "doctor" },
+        ],
+      }),
+    ),
+  /duplicate id/,
+);
+assert.throws(
+  () =>
+    validateProfile(
+      validProfile({
+        players: [
+          { id: "", role: "wolf" },
+          { id: "p2", role: "seer" },
+          { id: "p3", role: "doctor" },
+        ],
+      }),
+    ),
+  /non-empty id/,
+);
+assert.throws(
+  () =>
+    validateProfile(
+      validProfile({
+        players: [
+          { id: "p1", role: "wolf" },
+          { id: "p2", role: "seer" },
+          { id: "p3", role: "mayor" },
+        ],
+      }),
+    ),
+  /role for p3/,
 );
 assert.throws(
   () => validateProfile({
@@ -113,7 +182,9 @@ const capProfile = validateProfile({
 });
 assert.equal(capProfile.wolf_rotation_cap, 5);
 assert.equal(hashProfile({ b: 2, a: 1 }), hashProfile({ a: 1, b: 2 }));
+assert.equal(hashProfile({ players: [{ id: "p1", role: "wolf" }], name: "x" }), hashProfile({ name: "x", players: [{ role: "wolf", id: "p1" }] }));
 assert.notEqual(hashProfile({ a: 1 }), hashProfile({ a: 2 }));
+assert.notEqual(hashProfile(validProfile({ temperature: 0.1 })), hashProfile(validProfile({ temperature: 0.7 })));
 
 // === buildRunRequestBody ===
 const body = buildRunRequestBody(validated, "secret");
@@ -242,6 +313,13 @@ try {
   const manifestWritten = JSON.parse(await readFile(join(outDir, "manifest.json"), "utf8"));
   assert.equal(manifestWritten.profile_name, "mock-smoke");
   assert.equal(manifestWritten.scenario_id, "mock-smoke");
+  assert.equal(manifestWritten.provider, "stub");
+  assert.equal(manifestWritten.model, "stub-werewolf-v1");
+  assert.equal(manifestWritten.git_commit.length > 0, true);
+  assert.equal(manifestWritten.run_id.startsWith("mock-smoke-"), true);
+  assert.equal(manifestWritten.generation_settings.temperature, 0.2);
+  assert.equal(manifestWritten.generation_settings.max_tokens, 260);
+  assert.deepEqual(manifestWritten.players, profile.players);
   assert.equal(manifestWritten.completed_games, 3);
   assert.ok(manifestWritten.profile_hash);
 } finally {

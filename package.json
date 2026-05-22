@@ -6,9 +6,11 @@
     "build:web": "tsc -p tsconfig.web.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint:no-any": "node --import tsx ./scripts/no-explicit-any.ts",
-    "check": "npm run build:web && npm run typecheck && npm run lint:no-any",
+    "test:generated-boundary": "node --import tsx ./tests/generated-js-boundary.ts",
+    "check": "npm run build:web && npm run typecheck && npm run lint:no-any && npm run test:generated-boundary",
     "eval:local": "node --import tsx ./eval/run.ts ./eval/profiles/omlx-qwen35-mini.json",
     "eval:matrix": "node --import tsx ./node_modules/promptfoo/dist/src/main.js eval -c ./eval/promptfooconfig.yaml --max-concurrency 1",
+    "eval:matrix:node24": "npx -y -p node@24 node ./node_modules/promptfoo/dist/src/main.js eval -c ./eval/promptfooconfig.yaml --max-concurrency 1",
     "eval:report": "node --import tsx ./eval/report.ts ./eval/runs",
     "eval:hosted": "node --import tsx ./eval/run.ts ./eval/profiles/anthropic-haiku.json"
   },

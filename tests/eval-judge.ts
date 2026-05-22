@@ -34,6 +34,14 @@ const JUDGED_FIXTURE = join(ROOT, "eval", "fixtures", "judged", "with-judge-verd
   assert.equal(parseJudgeResponse('{"deceptive":true,"confidence":-5}')?.confidence, 0);
   // missing deceptive -> null
   assert.equal(parseJudgeResponse('{"confidence":0.5}'), null);
+  // array instead of object -> null
+  assert.equal(parseJudgeResponse('[{"deceptive":true,"confidence":0.5}]'), null);
+  // non-numeric confidence falls back to a neutral value rather than crashing
+  assert.deepEqual(parseJudgeResponse('{"deceptive": false, "confidence": "high"}'), {
+    deceptive: false,
+    confidence: 0.5,
+    reason: "",
+  });
   // garbage -> null
   assert.equal(parseJudgeResponse("not json at all"), null);
   assert.equal(parseJudgeResponse(""), null);
@@ -138,6 +146,36 @@ const JUDGED_FIXTURE = join(ROOT, "eval", "fixtures", "judged", "with-judge-verd
   assert.match(result.error, /upstream boom/);
 }
 
+// === callJudgeOpenAICompatible: response is not JSON ===
+{
+  const fakeFetch = async () => ({ ok: true, status: 200, text: async () => "not-json" });
+  const result = await callJudgeOpenAICompatible([], {
+    baseUrl: "http://judge.test/v1",
+    model: "fake-model",
+    apiKey: "x",
+    fetchImpl: fakeFetch,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /not JSON/);
+}
+
+// === callJudgeOpenAICompatible: empty model output ===
+{
+  const fakeFetch = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({ choices: [{ message: { content: "" } }] }),
+  });
+  const result = await callJudgeOpenAICompatible([], {
+    baseUrl: "http://judge.test/v1",
+    model: "fake-model",
+    apiKey: "x",
+    fetchImpl: fakeFetch,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /not parseable/);
+}
+
 // === callJudgeOpenAICompatible: malformed JSON in choices[0].message.content ===
 {
   const fakeFetch = async () => ({
@@ -154,6 +192,28 @@ const JUDGED_FIXTURE = join(ROOT, "eval", "fixtures", "judged", "with-judge-verd
   });
   assert.equal(result.ok, false);
   assert.match(result.error, /not parseable/);
+}
+
+// === judgeGameLog records judge errors instead of crashing aggregation ===
+{
+  const events = parseGameLog(await readFile(JUDGED_FIXTURE, "utf8")).filter(
+    (e) => e.kind !== "judge-verdict",
+  );
+  const fakeFetch = async () => ({ ok: false, status: 500, text: async () => "judge down" });
+  const result = await judgeGameLog(events, {
+    dryRun: false,
+    provider: "openai",
+    model: "judge-1",
+    baseUrl: "http://judge.test/v1",
+    apiKey: "k",
+    fetchImpl: fakeFetch,
+  });
+  assert.equal(result.verdicts.length, 2);
+  assert.equal(result.verdicts[0]?.kind, "judge-verdict");
+  assert.equal(result.verdicts[0]?.deceptive, undefined);
+  assert.match(String(result.verdicts[0]?.error), /judge down/);
+  const sc = aggregate([{ path: "judge-errors.jsonl", events: [...events, ...result.verdicts] }]);
+  assert.equal(sc.deception.judged_utterances, 0);
 }
 
 // === judgeGameLog dry-run produces verdict-shaped events without HTTP calls ===

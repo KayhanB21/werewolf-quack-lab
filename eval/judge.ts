@@ -203,6 +203,7 @@ export function parseJudgeResponse(text: unknown): JudgeVerdict | null {
   if (typeof text !== "string") return null;
   // strip code fences
   const stripped = text.replace(/```(?:json)?/g, "").trim();
+  if (stripped.startsWith("[")) return null;
   // find the first { ... } block
   const start = stripped.indexOf("{");
   if (start < 0) return null;

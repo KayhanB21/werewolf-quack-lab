@@ -11,6 +11,8 @@ const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 const REQUIRED_FIELDS = ["name", "provider", "game_count", "players"];
 const ROLE_REQUIREMENTS = ["wolf", "seer", "doctor"];
+const KNOWN_PROVIDERS = new Set(["stub", "omlx", "openai-compatible", "openai", "anthropic"]);
+const KNOWN_ROLES = new Set(["wolf", "villager", "seer", "doctor"]);
 
 type JsonRecord = Record<string, unknown>;
 type PlayerProfile = { id: string; role: string };
@@ -83,6 +85,11 @@ type RunManifest = {
   thinking_budget: unknown;
   temperature: number;
   max_tokens: number;
+  generation_settings: {
+    thinking_budget: unknown;
+    temperature: number;
+    max_tokens: number;
+  };
   players: PlayerProfile[];
   judge: unknown;
 };
@@ -133,6 +140,21 @@ function urlHost(value: unknown): string {
   }
 }
 
+function assertUrl(value: string, field: string): void {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("bad protocol");
+  } catch {
+    throw new Error(`profile.${field} must be a valid http(s) URL`);
+  }
+}
+
+function assertFiniteRange(value: number, field: string, min: number, max: number): void {
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`profile.${field} must be a number in [${min}, ${max}]`);
+  }
+}
+
 export function validateProfile(profile: unknown): EvalProfile {
   if (!profile || typeof profile !== "object") {
     throw new Error("profile must be an object");
@@ -143,6 +165,10 @@ export function validateProfile(profile: unknown): EvalProfile {
       throw new Error(`profile missing required field: ${f}`);
     }
   }
+  const provider = str(raw.provider);
+  if (!KNOWN_PROVIDERS.has(provider)) {
+    throw new Error(`profile.provider must be one of: ${[...KNOWN_PROVIDERS].join(", ")}`);
+  }
   if (!Number.isInteger(raw.game_count) || Number(raw.game_count) < 1) {
     throw new Error("profile.game_count must be a positive integer");
   }
@@ -150,35 +176,78 @@ export function validateProfile(profile: unknown): EvalProfile {
     throw new Error("profile.players must list at least 3 players");
   }
   const players = raw.players.filter(isRecord).map((p) => ({ id: str(p.id), role: str(p.role) }));
+  if (players.length !== raw.players.length) {
+    throw new Error("profile.players entries must be objects");
+  }
+  const ids = new Set<string>();
+  for (const player of players) {
+    if (!player.id) throw new Error("profile.players entries must have non-empty id");
+    if (ids.has(player.id)) throw new Error(`profile.players contains duplicate id: ${player.id}`);
+    ids.add(player.id);
+    if (!KNOWN_ROLES.has(player.role)) {
+      throw new Error(`profile.players role for ${player.id} must be one of: ${[...KNOWN_ROLES].join(", ")}`);
+    }
+  }
   const roleSet = new Set(players.map((p) => p.role));
   for (const r of ROLE_REQUIREMENTS) {
     if (!roleSet.has(r)) {
       throw new Error(`profile.players must include role: ${r}`);
     }
   }
+  if (![...roleSet].some((role) => role !== "wolf")) {
+    throw new Error("profile.players must include at least one town role");
+  }
   const conc = Number(raw.concurrency ?? 1);
   if (!Number.isInteger(conc) || conc < 1 || conc > 8) {
     throw new Error("profile.concurrency must be an integer in [1, 8]");
+  }
+  const maxRounds = Number(raw.max_rounds ?? 8);
+  if (!Number.isInteger(maxRounds) || maxRounds < 1 || maxRounds > 50) {
+    throw new Error("profile.max_rounds must be an integer in [1, 50]");
   }
   const wolfCap = Number(raw.wolf_rotation_cap ?? 3);
   if (!Number.isInteger(wolfCap) || wolfCap < 1 || wolfCap > 6) {
     throw new Error("profile.wolf_rotation_cap must be an integer in [1, 6]");
   }
+  const thinkingBudget = raw.thinking_budget ?? null;
+  if (
+    thinkingBudget !== null &&
+    (!Number.isInteger(thinkingBudget) || Number(thinkingBudget) < 0 || Number(thinkingBudget) > 32000)
+  ) {
+    throw new Error("profile.thinking_budget must be null or an integer in [0, 32000]");
+  }
+  const temperature = Number(raw.temperature ?? 0.2);
+  assertFiniteRange(temperature, "temperature", 0, 2);
+  const maxTokens = Number(raw.max_tokens ?? 260);
+  if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 32000) {
+    throw new Error("profile.max_tokens must be an integer in [1, 32000]");
+  }
+  const baseUrl = str(raw.base_url);
+  if (provider !== "stub") {
+    if (!baseUrl) throw new Error("profile.base_url is required for live providers");
+    assertUrl(baseUrl, "base_url");
+  } else if (baseUrl) {
+    assertUrl(baseUrl, "base_url");
+  }
+  const apiKeyEnv = str(raw.api_key_env);
+  if (provider === "omlx" && !apiKeyEnv) {
+    throw new Error("profile.api_key_env is required for OMLX profiles");
+  }
   return {
     ...raw,
     name: str(raw.name),
-    provider: str(raw.provider),
+    provider,
     game_count: Number(raw.game_count),
     players,
     model: raw.model === undefined ? undefined : str(raw.model),
     concurrency: Number(conc),
-    max_rounds: Number(raw.max_rounds ?? 8),
+    max_rounds: maxRounds,
     wolf_rotation_cap: Number(wolfCap),
-    thinking_budget: raw.thinking_budget ?? null,
-    temperature: Number(raw.temperature ?? 0.2),
-    max_tokens: Number(raw.max_tokens ?? 260),
-    base_url: str(raw.base_url),
-    api_key_env: str(raw.api_key_env),
+    thinking_budget: thinkingBudget,
+    temperature,
+    max_tokens: maxTokens,
+    base_url: baseUrl,
+    api_key_env: apiKeyEnv,
     gates: isRecord(raw.gates) ? raw.gates as Partial<GateConfig> : null,
     baseline_path: typeof raw.baseline_path === "string" ? raw.baseline_path : null,
     scenario_id: str(raw.scenario_id ?? raw.name),
@@ -320,6 +389,11 @@ export async function runProfile(profile: unknown, opts: RunOptions = {}) {
     thinking_budget: validated.thinking_budget,
     temperature: validated.temperature,
     max_tokens: validated.max_tokens,
+    generation_settings: {
+      thinking_budget: validated.thinking_budget,
+      temperature: validated.temperature,
+      max_tokens: validated.max_tokens,
+    },
     players: validated.players,
     judge: validated.judge,
   };
