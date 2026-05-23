@@ -148,7 +148,23 @@ explicitly.
 - `tests/eval-run.ts` — `validateProfile`, `buildRunRequestBody`,
   `extractDurableLogPath`, `extractDoneOk`, end-to-end against a mock HTTP
   server (3-game success path + 500-error failure path), output directory
-  layout, scorecard.json persistence.
+  layout, manifest fields, scorecard/gates persistence, profile hash stability,
+  and profile validation negatives.
+- `tests/eval-omlx-preflight.ts` — missing key, bad URL, connection failure,
+  401/403, invalid JSON, empty model list, expected-model mismatch, valid
+  `/models` response, and API-key redaction.
+- `tests/eval-promptfoo-provider.ts` — custom promptfoo provider contract:
+  profile/server/game-count resolution, output directory handling, scorecard
+  summary formatting, and negative cases for missing profile, invalid game
+  count, failed run, and incomplete scorecards.
+- `tests/generated-js-boundary.ts` — source-owned JavaScript/MJS stays out of
+  project source paths; generated browser JS is restricted to `.generated/web`.
+- `tests/eval-judge.ts` — judge prompt builder, verdict parsing, HTTP/JSON
+  failure handling, confidence validation, and aggregation of judge-error or
+  disagreement metadata.
+- `tests/eval-report.ts` — normalized Markdown/JSON report output across at
+  least two run directories, including gates, labels, confidence intervals, and
+  deltas.
 
 ## What is working
 
@@ -237,12 +253,18 @@ explicitly.
   configurable concurrency, captures the durable-log path from each
   game's result, copies the logs into
   `eval/runs/<profile>-<stamp>/game-NNN.jsonl`, then aggregates and
-  writes `scorecard.json`.
+  writes `manifest.json`, `scorecard.json`, and `gates.json`.
 - **Profiles**:
   - `eval/profiles/stub-smoke.json` — 3 games, scripted provider, no LLM.
+  - `eval/profiles/omlx-qwen35-mini.json` — 5-game daily local OMLX smoke.
   - `eval/profiles/omlx-qwen35.json` — 10 games against local omlx with
     Qwen3.5-9B-DeepSeek-V4-Flash-4bit, `thinking_budget=400`,
     `temperature=0.1`, `max_tokens=800`.
+  - `eval/profiles/omlx-qwen35-nothink.json` — thinking-budget counterfactual.
+  - `eval/profiles/omlx-qwen35-7p.json` — seven-player larger roster.
+  - `eval/profiles/omlx-qwen35-hot.json` — higher-temperature variance probe.
+  - `eval/profiles/omlx-large.json` — 50-game variance profile.
+  - `eval/profiles/anthropic-haiku.json` — hosted Claude Haiku 4.5 comparison.
 - **Configurable wolf rotation cap**: `wolfRotationCap` in the HTTP body
   (clamped to [1, 6], default 3). Threaded from `eval/run.ts` profiles via
   `wolf_rotation_cap`.

@@ -20,8 +20,8 @@ original design and may use older example names.
 The eval framework is now built and tested. Highlights:
 
 - **Per-turn instrumentation** in `container/agent-act.sh`: each agent turn
-  emits a `__TURN_STATS__ <json>` marker on stdout. The orchestrator parses
-  it (`parseTurnStatsMarkers` in `lib/lab-web-actions.ts`) and appends a
+  emits a `__TURN_STATS__ <json>` marker on stdout. The referee parses it
+  (`parseTurnStatsMarkers` in `lib/lab-web-actions.ts`) and appends a
   `turn-stats` event to the durable JSONL log.
 - **Reasoning capture**: omlx's `reasoning_content` is captured separately
   from the answer JSON. Setting `LLM_THINKING_BUDGET=400` (or higher) is
@@ -69,8 +69,8 @@ hosted OpenAI comparison profile. Those require Docker/API-key policy decisions
 before becoming regression fixtures.
 
 The rest of this document is the original design discussion — useful for
-understanding why we chose this architecture and what's planned for the
-deception-judge and hosted-provider phases.
+understanding why we chose this architecture and which hosted-provider and
+baseline decisions remain manual.
 
 ## Prior art survey (2024–2026)
 
@@ -584,10 +584,10 @@ etc/post-013/werewolf-quack-lab/
   games. Bump larger only if metric stddev across runs is wider than the gate
   bands.
 
-## What this plan does not cover
+## Adjacent work outside this eval plan
 
-- Promotion of the orchestrator out of `lab-web-server.ts` into
-  `bin/referee.ts`. Independent of eval; still in the backlog.
+- Referee extraction is complete: `lib/referee.ts` owns the orchestrator and
+  `bin/referee.ts` is the standalone CLI.
 - Per-host `quack_query` spans. The eval surfaces aggregated lab
   latency only; per-host attribution is a separate task.
 - Multi-provider head-to-head (e.g., gpt-4o-mini vs Qwen on the same

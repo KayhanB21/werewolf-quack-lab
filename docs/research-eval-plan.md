@@ -68,8 +68,12 @@ engine as the source of truth.
    ```
 
    promptfoo's current SQLite dependency supports Node 20-25. On hosts where
-   the default `node` is newer, run the matrix through the one-off Node 24
-   command above instead of changing the system Node.
+   the default `node` is newer, run the matrix through one-off Node 24 instead
+   of changing the system Node:
+
+   ```bash
+   make eval-matrix-node24
+   ```
 
 5. For Inspect AI packaging:
 
