@@ -10,9 +10,10 @@ aggregator that shifts a metric will fail CI loudly.
 - `fixtures.json` — aggregation of `eval/fixtures/*.jsonl`. Deterministic
   (`meta.generated_at` and per-game `path` fields are stripped before
   commit). Regenerated whenever fixtures or aggregator semantics change.
-- `stub-smoke.json` (lazy) — output of a live `eval/profiles/stub-smoke.json`
-  run. Commit by hand after a clean run; serves as the "did the pipeline
-  itself break?" tripwire across the orchestrator + container + Quack stack.
+- `stub-smoke.json` is intentionally not committed yet. When the project wants
+  a live Docker baseline, generate it from `eval/profiles/stub-smoke.json` and
+  commit it by hand as the "did the pipeline itself break?" tripwire across the
+  orchestrator, container, and Quack stack.
 
 ## Regenerating `fixtures.json`
 

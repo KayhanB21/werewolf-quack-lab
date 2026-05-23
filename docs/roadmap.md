@@ -77,8 +77,6 @@ Status: complete.
 
 Remaining work:
 
-- Promote the referee out of `bin/lab-web-server.ts` into a standalone
-  `bin/referee.ts` so the HTTP server is just a thin shell.
 - Expose max rounds and wolf rotation cap in the UI (wired via API today).
 - Add tie-breaking policy controls.
 - Add memory compaction for longer games.
@@ -95,21 +93,36 @@ Status: complete (P3 in `docs/implementation-status.md`).
   `reasoning_content` split for Qwen3 family models that otherwise loop on
   unbounded CoT.
 - `lib/lab-web-actions.ts#parseTurnStatsMarkers` parses the marker; the
-  orchestrator appends `turn-stats` events to the durable log.
+  referee appends `turn-stats` events to the durable log.
 - `eval/aggregate.ts` computes a scorecard with `prompt_following`,
-  `game_shape`, `belief_quality`, and `performance` sections.
+  `game_shape`, `belief_quality`, `performance`, `strategy`,
+  `trust_dynamics`, and `deception` sections.
 - `eval/run.ts` drives N games via `/api/run`, collects each durable log,
-  aggregates, and writes `scorecard.json`.
+  aggregates, and writes `manifest.json`, `scorecard.json`, and `gates.json`.
 - Profiles in `eval/profiles/`: `stub-smoke.json` (3-game pipeline sanity),
-  `omlx-qwen35.json` (10 games against local omlx with `thinking_budget=400`).
+  `omlx-qwen35-mini.json` (5-game daily OMLX smoke), `omlx-qwen35.json`
+  (10-game default OMLX profile), `omlx-qwen35-nothink.json`,
+  `omlx-qwen35-7p.json`, `omlx-qwen35-hot.json`, `omlx-large.json`
+  (50-game variance profile), and `anthropic-haiku.json`.
+- `eval/omlx-preflight.ts` validates local OMLX `/v1/models` before live
+  OMLX runs.
+- `eval/promptfooconfig.yaml` and `eval/providers/werewolf-run.ts` expose the
+  stub and OMLX profiles to promptfoo with serialized local OMLX execution.
+- `eval/judge.ts` implements the LLM-as-judge deception pass and records judge
+  failures as metadata instead of crashing aggregation.
+- `eval/report.ts` compares run directories and writes Markdown/JSON reports
+  with bootstrap confidence intervals, gate status, and deltas.
+- `eval/inspect/werewolf_task.py` packages the Node runner as an Inspect AI
+  task, and `make eval-inspect-test` checks it through `uv`.
 
 Remaining work:
 
-- Hosted-LLM provider path (Anthropic `/messages` is not OpenAI-compatible).
-- LLM-as-judge deception metrics (`deception_production_rate`,
-  `deception_detection_rate` from the WOLF taxonomy).
-- Larger N profiles for variance analysis (omlx-large at 100 games,
-  openai-mini once an API key is wired).
+- Commit live-run baselines beyond deterministic fixtures when a clean Docker
+  run should become a regression tripwire.
+- Add an OpenAI hosted comparison profile once API-key policy and cost controls
+  are settled.
+- Add a dedicated OMLX concurrency benchmark before increasing profile
+  concurrency above 1.
 
 ## Phase 6: Token-Scoped ACLs
 

@@ -1,13 +1,21 @@
 # Eval framework plan
 
-## Status: what's landed (2026-05-19)
+## Status: historical plan plus current state
 
 **2026-05-21 note:** this original plan has been extended by
 `docs/research-eval-plan.md`. The current tree now includes the Anthropic
 provider branch, LLM-as-judge deception pass, research-grade statement /
 belief / wolf-consensus log events, promptfoo wiring, an Inspect AI wrapper,
-run manifests, and comparison reports. The older "not yet built" notes below
-are preserved as historical design context.
+run manifests, and comparison reports. Older planned-design sections below are
+preserved as historical design context.
+
+**2026-05-22 note:** OMLX is now the default local live-eval path. Live OMLX
+targets preflight `/v1/models` with `eval/omlx-preflight.ts`, promptfoo uses a
+real stub-plus-OMLX matrix through `eval/providers/werewolf-run.ts`, and
+`make eval-matrix-node24` exists for promptfoo's SQLite/Node compatibility
+fallback. Current workflow details live in `README.md` and
+`docs/research-eval-plan.md`; sections below this status block explain the
+original design and may use older example names.
 
 The eval framework is now built and tested. Highlights:
 
@@ -21,16 +29,18 @@ The eval framework is now built and tested. Highlights:
   the budget the model loops on CoT indefinitely. Tested at ~9 s per turn
   with clean JSON.
 - **Aggregator** (`eval/aggregate.ts`): pure module + CLI. Scorecard
-  covers prompt-following, game-shape, belief-quality, and performance.
+  covers prompt-following, game-shape, belief-quality, performance, strategy,
+  trust dynamics, and deception metrics.
 - **Batch runner** (`eval/run.ts`): drives N games against `/api/run`,
   collects durable logs into `eval/runs/<profile>-<stamp>/`, writes
-  `scorecard.json`.
-- **Profiles**: `eval/profiles/stub-smoke.json` (3-game pipeline sanity)
-  and `eval/profiles/omlx-qwen35.json` (10-game Qwen3.5 with
-  `thinking_budget=400`).
-- **Tests**: `tests/eval-aggregate.ts` and `tests/eval-run.ts` cover
-  metric correctness, edge cases (empty / malformed / missing fields),
-  end-to-end via mock HTTP, and HTTP failure paths.
+  `manifest.json`, `scorecard.json`, and `gates.json`.
+- **Profiles**: `eval/profiles/stub-smoke.json`, `omlx-qwen35-mini.json`,
+  `omlx-qwen35.json`, `omlx-qwen35-nothink.json`, `omlx-qwen35-7p.json`,
+  `omlx-qwen35-hot.json`, `omlx-large.json` (50 games), and
+  `anthropic-haiku.json`.
+- **Tests**: eval coverage now includes aggregate, gates, runner, OMLX
+  preflight, promptfoo provider contract, judge parsing/failure modes, deep
+  lifecycle scenarios, and report output.
 
 **Landed since the original plan:**
 
@@ -45,11 +55,18 @@ The eval framework is now built and tested. Highlights:
   aggregate. See `eval/baselines/README.md` for the regeneration recipe.
 - `eval/profiles/omlx-large.json` — 50-game omlx variance-analysis profile,
   wired via `make eval-large`.
+- `eval/omlx-preflight.ts` — live OMLX readiness checks for API key, URL,
+  `/models` shape, and expected model presence.
+- `eval/promptfooconfig.yaml` + `eval/providers/werewolf-run.ts` —
+  promptfoo comparison matrix for `stub`, `omlx-mini`, `omlx-default`,
+  `omlx-nothink`, `omlx-hot`, and `omlx-7p`.
+- `eval/judge.ts` — LLM-as-judge deception pass with graceful parse/error
+  handling.
+- `eval/report.ts` — run-directory Markdown/JSON comparison reports.
 
-**Not yet built (in this plan but deferred):** promptfoo wiring, the
-Anthropic provider branch in `container/agent-act.sh`, LLM-as-judge
-deception metrics, committed live-run baseline for `stub-smoke` (lazy;
-requires Docker), `openai-mini` / `anthropic-haiku` profiles.
+**Still intentionally not committed:** live-run `stub-smoke` baseline and any
+hosted OpenAI comparison profile. Those require Docker/API-key policy decisions
+before becoming regression fixtures.
 
 The rest of this document is the original design discussion — useful for
 understanding why we chose this architecture and what's planned for the
@@ -96,9 +113,9 @@ The right shape for *this* project is:
      defined in YAML. The "provider" simply POSTs to our local
      `/api/run` (or to `eval/run.ts`) and returns the path to the
      durable JSONL.
-   - promptfoo handles: iteration count, parallelism, per-provider
-     output capture, diff-vs-baseline view, the CLI ergonomics, and the
-     html report. We do not reinvent any of that.
+   - promptfoo handles provider orchestration, serialized local execution,
+     per-provider output capture, CLI ergonomics, and report rendering. The
+     game-specific scoring remains in `eval/aggregate.ts`.
    - One YAML config (`eval/promptfooconfig.yaml`) describes the matrix
      of provider × profile × game-count.
 2. **Custom `eval/aggregate.ts` for game-specific metrics.**
@@ -107,8 +124,9 @@ The right shape for *this* project is:
      rotation?". Those require joining the durable log against the
      `game-start` event's role assignments.
    - The aggregator stays pure (input: array of parsed JSONL events,
-     output: scorecard object) and is consumed by promptfoo as a
-     [model-graded assertion via JS function](https://www.promptfoo.dev/docs/configuration/expected-outputs/javascript/).
+     output: scorecard object). The promptfoo custom provider returns the run
+     directory, summary, gates, provider, model, and profile metadata rather
+     than duplicating metric logic in promptfoo assertions.
 3. **Borrow metric definitions, not code, from WOLF and Werewolf Arena.**
    - From WOLF: split `deception_production_rate` (wolves lying in
      `public_text`) from `deception_detection_rate` (villagers
@@ -176,15 +194,12 @@ Concretely the eval framework supports four providers:
 | stub     | `stub`               | n/a                                     | Scripted; pipeline sanity only |
 | omlx     | `omlx`               | `http://host.docker.internal:8000/v1`   | Default baseline; local MLX server |
 | openai   | `openai`             | `https://api.openai.com/v1`             | Hosted; gated on `OPENAI_API_KEY` |
-| anthropic| `anthropic` (new)    | `https://api.anthropic.com/v1`          | Hosted; gated on `ANTHROPIC_API_KEY`; **requires a new provider path in `agent-act.sh`** since Claude's chat API is not OpenAI-compatible |
+| anthropic| `anthropic`          | `https://api.anthropic.com/v1`          | Hosted; gated on `ANTHROPIC_API_KEY`; implemented in `agent-act.sh` with prompt caching |
 
-The Anthropic path is the only new-code chunk on the agent side. Plan it
-as a small module `container/agent-act-anthropic.sh` (or a switch inside
-`agent-act.sh`) that translates the same system + user messages into
-Claude's `/messages` request, uses prompt caching for the system block,
-and parses `content[0].text` as the JSON object. Everything downstream
-(`__BELIEFS__` marker, `__TURN_STATS__` marker, durable log) is
-provider-agnostic.
+The Anthropic branch translates the same system + user messages into Claude's
+`/messages` request, uses prompt caching for the system block, and parses
+`content[0].text` as the JSON object. Everything downstream (`__BELIEFS__`
+marker, `__TURN_STATS__` marker, durable log) is provider-agnostic.
 
 ## Goals
 
@@ -268,10 +283,10 @@ provider-agnostic.
 - Cost surrogate: `total_llm_calls`, `total_tokens` (if the provider
   returns usage data; OpenAI-compatible endpoints typically do).
 
-## Required instrumentation (NOT YET BUILT)
+## Original required instrumentation (implemented)
 
-These are the hooks the eval depends on. They are intentionally small and
-should be merged behind a single PR before the eval framework lands.
+These were the hooks the eval depended on. They are implemented; the section is
+kept to explain why the marker/event shape exists.
 
 ### 1. Per-turn stats marker in `agent-act.sh`
 
@@ -295,13 +310,12 @@ Sources for the fields:
 - `usage` — pulled from `response.usage` when present (omlx and OpenAI
   both return it).
 
-### 2. Orchestrator capture
+### 2. Referee capture
 
-`runAgentPhase` in `lab-web-server.ts` already captures stdout via
-`runStepCapture` for the beliefs marker. Add a `parseTurnStatsMarkers`
-helper next to `parseBeliefsMarkers` and append a `turn-stats` event to
-the durable log for each marker. This keeps everything queryable from one
-file per game.
+`runAgentPhase` in `lib/referee.ts` captures stdout via `runStepCapture`.
+`parseTurnStatsMarkers` lives next to `parseBeliefsMarkers`, and the referee
+appends a `turn-stats` event to the durable log for each marker. This keeps
+everything queryable from one file per game.
 
 ### 3. Pre-elim role table per game
 
@@ -363,37 +377,42 @@ inside.
 ### Outside: `eval/promptfooconfig.yaml`
 
 ```yaml
-description: "werewolf-quack-lab cross-provider eval"
+description: "werewolf-quack-lab provider/profile comparison matrix"
+# Keep local OMLX serialized. Model-server concurrency can distort latency,
+# timeout, and failure-rate metrics; use a dedicated benchmark for concurrency.
+maxConcurrency: 1
+
+prompts:
+  - "Run the configured werewolf eval profile."
+
 providers:
-  - id: file://eval/providers/stub.ts
+  - id: file://providers/werewolf-run.ts
     label: stub
-  - id: file://eval/providers/omlx.ts
-    label: omlx-qwen-2.5-7b
     config:
-      model: qwen-2.5-7b-instruct
-      base_url: http://localhost:8000/v1
-  - id: file://eval/providers/openai.ts
-    label: openai-gpt-4o-mini
+      profile: eval/profiles/stub-smoke.json
+      provider: stub
+      model: stub-werewolf-v1
+      server: http://localhost:5174
+  - id: file://providers/werewolf-run.ts
+    label: omlx-mini
     config:
-      model: gpt-4o-mini
-  - id: file://eval/providers/anthropic.ts
-    label: anthropic-haiku
+      profile: eval/profiles/omlx-qwen35-mini.json
+      server: http://localhost:5174
+  - id: file://providers/werewolf-run.ts
+    label: omlx-default
     config:
-      model: claude-haiku-4-5-20251001
+      profile: eval/profiles/omlx-qwen35.json
+      server: http://localhost:5174
 tests:
-  - vars:
-      profile: omlx-default
-      games: 25
-    assert:
-      - type: javascript
-        value: file://eval/assertions/scorecard-gates.ts
+  - description: "run configured profile and return scorecard metadata"
+    vars: {}
 ```
 
 promptfoo iterates each provider × test row, invokes the provider
 module, captures its return value (a scorecard summary plus durable-log
 paths), and renders an HTML / Markdown comparison table.
 
-### Inside: `eval/providers/<name>.ts`
+### Inside: `eval/providers/werewolf-run.ts`
 
 Each provider module exports a single `callApi(prompt, context, options)`
 function. The module's only job is:
@@ -420,17 +439,21 @@ Why a JS shim and not a direct promptfoo HTTP provider:
 Profile fields: `games`, `players` (count + role mix), `max_rounds`,
 `seed_strategy`, `wolf_rotations_max`.
 
-Profiles to ship:
+Profiles currently shipped:
 
 - `stub-smoke.json` — 3 games, provider stub. Free, runs in CI as part
   of `bin/smoke-test.sh`. Pipeline sanity only.
-- `omlx-default.json` — 25 games, provider omlx, local model. The
-  default committed baseline.
-- `omlx-large.json` — 100 games. Periodic deep baseline; not run on
+- `omlx-qwen35-mini.json` — 5 games, provider omlx, daily local smoke.
+- `omlx-qwen35.json` — 10 games, provider omlx, default local profile.
+- `omlx-qwen35-nothink.json` — same shape with `thinking_budget=0`.
+- `omlx-qwen35-7p.json` — larger seven-player roster.
+- `omlx-qwen35-hot.json` — temperature 0.7 variance probe.
+- `omlx-large.json` — 50 games. Periodic variance profile; not run on
   every change.
-- `openai-mini.json` — 10 games, gpt-4o-mini. Comparison baseline.
 - `anthropic-haiku.json` — 10 games, claude-haiku-4-5. Comparison
   baseline.
+
+An OpenAI hosted comparison profile is not currently committed.
 
 ## Baselines and regression gates
 
@@ -498,17 +521,17 @@ etc/post-013/werewolf-quack-lab/
     profiles/
       stub-smoke.json        # landed
       omlx-qwen35.json       # landed
-      # Forthcoming:
       # omlx-large.json
-      # openai-mini.json
+      # omlx-qwen35-mini.json
+      # omlx-qwen35-nothink.json
+      # omlx-qwen35-7p.json
+      # omlx-qwen35-hot.json
       # anthropic-haiku.json
     runs/                    # gitignored; <profile>-<stamp>/ outputs
-    # Forthcoming (not yet built):
-    # promptfooconfig.yaml
-    # providers/{stub,omlx,openai,anthropic}.ts
-    # assertions/scorecard-gates.ts
-    # fixtures/{village-win,wolf-win,malformed-turn-stats}.jsonl
-    # baselines/{stub-smoke,omlx-default,openai-mini}.json
+    promptfooconfig.yaml
+    providers/werewolf-run.ts
+    fixtures/{village-win,wolf-win,malformed-turn-stats}.jsonl
+    baselines/{fixtures.json,README.md}
   tests/                     # all test suites
     agent-act.sh
     mint-token.sh
@@ -522,29 +545,20 @@ etc/post-013/werewolf-quack-lab/
 
 ## Phased rollout
 
-1. **Instrument**: add `__TURN_STATS__` marker, `parseTurnStatsMarkers`,
-   and durable-log `turn-stats` event. Also adds an Anthropic provider
-   path in `agent-act.sh` (or a sibling script) since Claude's API is
-   not OpenAI-compatible. One PR, no new functionality.
-2. **Aggregate**: ship `eval/aggregate.ts` and the unit tests with
-   synthetic fixtures. No live model needed.
-3. **promptfoo wiring**: add `eval/promptfooconfig.yaml`, the four
-   provider shims, and the gates assertion. Wire the `stub-smoke`
-   profile to `bin/smoke-test.sh` so CI exercises the entire pipeline
-   without booting a model server. Pin promptfoo version in
-   `package.json` and document the `npx promptfoo@<ver> eval -c
-   eval/promptfooconfig.yaml` invocation.
-4. **Baselines**: commit baselines for `stub-smoke` and
-   `omlx-default`. Hosted-provider baselines are committed lazily, only
-   after a manual run with API keys present.
-5. **Deception-metric judge**: ship the LLM-as-judge pass for
-   `deception_production_rate`. Default judge: same provider as the
-   batch under test (self-grading), with an option to override to a
-   stronger model.
-6. **Manual hosted runs**: document the workflow in
-   `docs/eval-running-hosted.md`. Do not automate; both OpenAI and
-   Anthropic cost money. Provide a `make eval-hosted PROVIDER=openai`
-   shortcut that fails fast if the corresponding API key is missing.
+1. **Instrument**: done. `__TURN_STATS__`, beliefs, intent, statement,
+   belief, and wolf-consensus events feed the durable log.
+2. **Aggregate**: done. `eval/aggregate.ts` and fixtures cover the metric
+   shape without a live model.
+3. **promptfoo wiring**: done for the local matrix via
+   `eval/providers/werewolf-run.ts`; promptfoo orchestrates comparisons while
+   the custom aggregator remains the source of game metrics.
+4. **Baselines**: deterministic fixture baseline is committed. Live-run
+   baselines remain manual until the project decides which Docker/API-key runs
+   should be regression fixtures.
+5. **Deception-metric judge**: done in `eval/judge.ts`; judge parse and HTTP
+   failures become judge-error/disagreement metadata.
+6. **Manual hosted runs**: Anthropic has a profile and make target. OpenAI
+   hosted eval remains a future comparison profile.
 
 ## Open questions
 
@@ -566,9 +580,9 @@ etc/post-013/werewolf-quack-lab/
   problem: the judge can be wrong. Plan: report `deception_*` metrics
   with a `judge_model` and `judge_agreement_rate` (when two judges run,
   fraction of items they agreed on) so consumers know the noise floor.
-- Variance: 25 games per omlx baseline is the starting point. May need
-  to bump to 50 if metric stddev across runs is wider than the gates.
-  Decide empirically.
+- Variance: the default OMLX profile is 10 games, and `omlx-large` is 50
+  games. Bump larger only if metric stddev across runs is wider than the gate
+  bands.
 
 ## What this plan does not cover
 

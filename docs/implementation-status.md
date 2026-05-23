@@ -311,17 +311,12 @@ in ~10 s.
 
 ## End-to-end Docker smoke
 
-`bin/labctl smoke` was last run against Docker on 2026-05-18 with DuckDB
-v1.5.2 inside the containers. All eight assertions pass: whoami federation,
-public_log federation, rationale not leaked, wolf_channel scoped, row
-filtering on player nodes, post_game closed, private intents rejected. The
-`quack_serve(token => 'lab-server')` placeholder is fine in practice; Quack
-does not require server_token to match anything specific.
-
-After the 2026-05-19 reorganization the in-container paths changed
-(`/app/container/...`, `/app/lib/...`); the Dockerfile was updated to copy
-those directories. The next `bin/labctl smoke` run will exercise the new
-layout end to end.
+`make test` was last run against Docker on 2026-05-22 with DuckDB v1.5.2
+inside the containers. It runs the shell/unit suites and then the real Quack
+smoke. The smoke assertions pass: whoami federation, public_log federation,
+rationale not leaked, wolf_channel scoped, row filtering on player nodes,
+post_game closed, and private intents rejected. The post-reorganization
+container layout (`/app/container/...`, `/app/lib/...`) is exercised end to end.
 
 ## Recent additions (2026-05-20)
 
@@ -368,12 +363,11 @@ layout end to end.
    one auto-game from a spec JSON.
 2. Per-host `quack_query` spans: parse `duckdb_logs_parsed('Quack')` output
    and emit one span per remote call instead of the current aggregate span.
-3. Hosted-LLM provider path: Anthropic's `/messages` API is not
-   OpenAI-compatible. A new branch in `container/agent-act.sh` (or a
-   sibling shim) is needed for first-class Anthropic support.
-4. Deception-quality metrics that require LLM-as-judge — the current
-   aggregator covers prompt-following, game-shape, belief, and performance,
-   but `deception_production_rate` / `deception_detection_rate` from the
-   WOLF taxonomy require a separate judge pass over `reasoning_content`.
-5. Larger N profiles for variance analysis (`omlx-large` at 100 games,
-   `openai-mini` at 25 games once an API key is wired).
+3. Browser-facing provider diagnostics: the eval runner and preflight now fail
+   clearly, but the browser timeline can still use more provider-specific
+   remediation text and a redacted diagnostic bundle.
+4. Live-run baselines: deterministic fixture baselines are committed; decide
+   whether `stub-smoke` and any OMLX live runs should become committed
+   regression fixtures.
+5. Hosted comparison breadth: Anthropic Haiku is present; an OpenAI profile can
+   be added once API-key policy and cost controls are settled.

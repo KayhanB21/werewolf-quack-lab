@@ -321,6 +321,7 @@ paths.
 
 - `docs/architecture.md`: implementation architecture and current boundaries.
 - `docs/roadmap.md`: completed work and next milestones.
-- `docs/eval-plan.md`: eval framework design and metric taxonomy.
+- `docs/eval-plan.md`: historical eval framework design and metric taxonomy.
+- `docs/research-eval-plan.md`: current research eval layer and workflow.
 - `docs/implementation-status.md`: per-feature status, including the eval
   framework and the omlx + Qwen3.5 reasoning-mode notes.

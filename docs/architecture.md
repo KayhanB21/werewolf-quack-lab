@@ -23,7 +23,7 @@ lab web server
   bin/lab-web-server.ts
   writes runtime config
   streams command output as NDJSON
-  runs the lightweight referee for Play Game
+  delegates Play Game to lib/referee.ts
 
 dev runner
   bin/lab-web-dev.ts
@@ -69,10 +69,11 @@ volume per player. Supported roles are:
 - `seer`
 - `doctor`
 
-The current game loop treats roles mostly as data. Wolves get private wolf
-actions and the win condition counts wolves versus town. Seer and doctor are
-available in config and prompts, but their full rule powers are still future
-work.
+The current game loop treats roles as active game mechanics. Wolves get private
+wolf actions and the win condition counts wolves versus town. Seer and doctor
+have night phases: seers investigate one alive non-self player and receive a
+private note, while doctors can save any alive player, including themselves,
+with a matching save cancelling the wolf kill.
 
 ## Container-Local Agent Actions
 
@@ -177,7 +178,7 @@ The `Manual steps` disclosure exposes the lower-level commands for debugging:
 start, day, public log, wolf, wolf channel, denied scope, full round, whoami, and
 smoke.
 
-`Play Game` does this:
+`Play Game` delegates to `lib/referee.ts` and does this:
 
 1. Run `labctl down` and `labctl up`.
 2. For each round, ask every alive player to run public discussion with `day`.
@@ -186,16 +187,21 @@ smoke.
 5. Query the current round's vote rows through `public_log`.
 6. Eliminate the plurality vote target, if any.
 7. If wolves are gone, village wins.
-8. Ask each alive wolf to run `wolf`.
+8. Ask each alive wolf to run `wolf` until consensus or the rotation cap.
 9. Query the current round's wolf rows through `wolf_channel`.
-10. Kill the plurality wolf target, if any.
-11. If wolves have parity with town, wolves win.
-12. Stop after the max round limit and mark the result undecided.
+10. Ask live doctors to run `doctor` and query `doctor_channel`.
+11. Ask live seers to run `seer` and query `seer_channel`.
+12. Resolve the night: a matching doctor save cancels the wolf kill; otherwise
+    the plurality wolf target dies.
+13. Write private seer findings back into the seer's node.
+14. If wolves have parity with town, wolves win.
+15. Stop after the max round limit and mark the result undecided.
 
 The referee is deliberately small. It proves that real containers, real Quack
-queries, local write boundaries, and federated policy checks can support a full
-round flow. It does not yet implement full Werewolf role powers, player memory
-compression, or a production-grade event store.
+queries, local write boundaries, federated policy checks, wolf coordination,
+seer investigations, doctor saves, and role reveals can support a full round
+flow. It does not yet implement production session security, rich role
+variants, player memory compression, or configurable tie-breaking policy.
 
 ## Player Node Boundary
 
@@ -299,13 +305,14 @@ container paths.
 ## Eval Framework
 
 `eval/aggregate.ts` consumes `.generated/games/<id>.jsonl` durable logs
-and emits a scorecard with four sections: `prompt_following`, `game_shape`,
-`belief_quality`, `performance`. `eval/run.ts` drives N games via
-`/api/run`, collects each game's durable log into
-`eval/runs/<profile>-<stamp>/`, and writes the aggregated `scorecard.json`.
+and emits a scorecard with prompt-following, game-shape, belief-quality,
+performance, strategy, trust-dynamics, and deception sections. `eval/run.ts`
+drives N games via `/api/run`, collects each game's durable log into
+`eval/runs/<profile>-<stamp>/`, and writes `manifest.json`,
+`scorecard.json`, and `gates.json`.
 
 Each agent invocation emits a per-turn `__TURN_STATS__ <json>` marker line
-on stdout. The orchestrator (`bin/lab-web-server.ts`) parses these via
+on stdout. The referee (`lib/referee.ts`) parses these via
 `parseTurnStatsMarkers` in `lib/lab-web-actions.ts` and appends them as
 `turn-stats` events in the durable log. Captured per turn: parse path
 (`stub` / `object` / `text` / `http-error`), JSON validity, action
